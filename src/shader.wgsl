@@ -1,5 +1,6 @@
 struct Uniforms {
     resolution: vec2<u32>,
+    _padding: vec2<u32>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

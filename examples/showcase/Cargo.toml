@@ -1,0 +1,25 @@
+[package]
+name = "showcase"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+holofoil.workspace = true
+
+png.workspace = true
+web-time.workspace = true
+winit.workspace = true
+
+wgpu.workspace = true
+wgpu.features = ["webgl"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+notify.workspace = true
+pollster.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+web-sys.features = ["Document", "Window", "HtmlCanvasElement"]

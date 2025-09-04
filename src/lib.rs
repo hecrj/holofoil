@@ -14,7 +14,7 @@ pub struct Pipeline {
 
 macro_rules! load_wgsl {
     ($path:literal) => {
-        if cfg!(debug_assertions) {
+        if cfg!(all(not(target_arch = "wasm32"), debug_assertions)) {
             $crate::wgpu::ShaderModuleDescriptor {
                 label: Some($path),
                 source: $crate::wgpu::ShaderSource::Wgsl(
@@ -278,6 +278,7 @@ impl Pipeline {
             0,
             bytemuck::cast_slice(&[Uniforms {
                 resolution: [resolution.0, resolution.1],
+                _padding: [0, 0],
             }]),
         );
 
@@ -366,4 +367,5 @@ struct Instance {
 #[repr(C)]
 struct Uniforms {
     resolution: [u32; 2],
+    _padding: [u32; 2],
 }
