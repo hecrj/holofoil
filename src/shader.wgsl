@@ -24,17 +24,27 @@ struct VertexOutput {
     @location(2) rotation: f32,
 }
 
+const fov: f32 = 60.0;
+
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
+    let max_dimension = f32(max(input.size.x, input.size.y));
+    let max_distance = max_dimension * 1.2;
+    let camera = vec3(0.0, 0.0, -max_distance);
+    let distance_to_camera = length(vec3(input.position, 0.0) - camera);
+
+    let half_fov = fov / 2.0;
+    let scale = distance_to_camera * tan(half_fov); 
+
     let corner = corner_position(input.index);
-    let position = vec2<f32>(input.size * corner) + (input.position + vec2<f32>(uniforms.resolution) / 2.0) - vec2<f32>(input.size) / 2.0;
+    let position = scale * vec2<f32>(corner) + (input.position + vec2<f32>(uniforms.resolution) / 2.0) - scale / 2.0;
 
     out.center = vec2<f32>(input.position);
     out.size = vec2<f32>(input.size);
     out.rotation = input.rotation;
-    out.position = vec4<f32>(2.0 * position / vec2<f32>(uniforms.resolution) - 1.0, 0.0, 1.0);
+    out.position = vec4<f32>(2.0 * position / vec2<f32>(uniforms.resolution) - 1.0, 0.0, 1.0) ;
 
     return out;
 }
@@ -42,58 +52,55 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     const n_samples: i32 = 4;
-    const max_distance: f32 = 1.0;
 
-    let camera = vec3(0.0, 0.0, -max_distance * 2.0);
-    let fov = 45.0; // degrees
-    let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
-    let ndc = vec2(
-        (input.position.x / f32(uniforms.resolution.x)) * 2.0 - 1.0,
-        1.0 - (input.position.y / f32(uniforms.resolution.y)) * 2.0
-    );
-
-    let screen_pos = vec3(ndc.x * aspect * tan(radians(fov)/2.0),
-                          ndc.y * tan(radians(fov)/2.0),
-                          1.0);
-
-    let position = input.position.xy - vec2<f32>(uniforms.resolution) / 2.0 + input.center;
     let max_dimension = f32(max(input.size.x, input.size.y));
+    let max_distance = max_dimension * 1.2;
     let card_size = input.size / (2.0 * max_dimension);
+
+    let camera = vec3(0.0, 0.0, -max_distance);
+    let fov = radians(60.00);
+    let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
+    let pixel = vec2(
+        2.0 * input.position.x - f32(uniforms.resolution.x),
+        // f32(uniforms.resolution.y) - 2.0 * input.position.y + 1.0
+        2.0 * input.position.y - f32(uniforms.resolution.y),
+    );
+    let screen = vec3(pixel.x * tan(fov / 2.0), pixel.y * tan(fov / 2.0), -1.0);
 
     let cos_rot = cos(input.rotation);
     let sin_rot = sin(input.rotation);
 
     let rotation = mat3x3<f32>(
-        vec3<f32>(cos_rot, 0.0, sin_rot),
-        vec3<f32>(0.0, 1.0, 0.0),
-        vec3<f32>(-sin_rot, 0.0, cos_rot),
+        vec3(cos_rot, 0.0, sin_rot),
+        vec3(0.0, 1.0, 0.0),
+        vec3(-sin_rot, 0.0, cos_rot),
     );
 
     var color: vec4<f32>;
 
     for (var m = 0; m < n_samples; m++) {
     for (var n = 0; n < n_samples; n++) {
-        let o = vec2(f32(m), f32(n)) / f32(n_samples) - 0.5;
-        let ray_origin = vec3((position + o) / max_dimension, -max_distance);
-        let ray_target = vec3(position / max_dimension, max_distance);
+        let o = vec3(f32(m), f32(n), 0.0) / f32(n_samples) - 0.5;
+        let ray_origin = camera;
+        let ray_target = screen + o;
         let ray_direction = normalize(ray_target - ray_origin);
 
         var t = -max_distance;
 
         for (var i = 0; i < 64; i++) {
-            let p = transpose(rotation) * (ray_origin + ray_direction * t);
+            let p = transpose(rotation) * ((ray_origin + ray_direction * t) / max_dimension);
             let d = sd_card(p, card_size);
 
-            if d < 0.001 || t > 2.0 * max_distance {
+            if d < 0.0001 || t > 2.0 * max_distance {
                 break;
             }
 
-            t += d;
+            t += d * max_dimension;
         }
 
 
         if t <= 2.0 * max_distance {
-            let hit = transpose(rotation) * (ray_origin + ray_direction * t);
+            let hit = transpose(rotation) * ((ray_origin + ray_direction * t) / max_dimension);
             let normal = estimate_normal(hit, card_size);
             let normal_abs = abs(normal);
 
