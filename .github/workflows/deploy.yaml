@@ -1,0 +1,39 @@
+name: Deploy
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+    steps:
+    - uses: hecrj/setup-rust-action@v2
+      with:
+        targets: wasm32-unknown-unknown
+    - uses: actions/checkout@v2
+    - name: Install trunk
+      run: |
+        cd examples/showcase
+        wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+    - name: Build showcase
+      run: |
+        cd examples/showcase
+        ./trunk build --release --public-url /holofoil/
+    - name: Upload static files as artifact
+      id: deployment
+      uses: actions/upload-pages-artifact@v4
+      with:
+        path: examples/showcase/dist/
+
+  upload:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
