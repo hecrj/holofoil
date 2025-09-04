@@ -1,0 +1,15 @@
+[package]
+name = "holofoil"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = "1"
+bytes = "1"
+wgpu = "26"
+winit = "0.30"
+
+[dev-dependencies]
+png = "0.18"
+pollster = "0.4"
+notify = "8"
