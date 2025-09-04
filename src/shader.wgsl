@@ -61,6 +61,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fov = radians(80.00);
     let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
 
+    let light = vec3(3.0, 8.0, -20.0);
+    let light_power = 300.0;
+
     let cos_rot = cos(input.rotation);
     let sin_rot = sin(input.rotation);
 
@@ -79,10 +82,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         let pixel = vec2<f32>(
             2.0 * (input.position.x + o.x) - f32(uniforms.resolution.x),
-            -f32(uniforms.resolution.y) + 2.0 * (input.position.y + o.y)
+            -2.0 * (input.position.y + o.y) + f32(uniforms.resolution.y),
         ) / f32(uniforms.resolution.y);
-        let ray_target = vec3(pixel.x, pixel.y, 1.0);
-        let ray_direction = normalize(ray_target - ray_origin);
+
+        let ray_direction = normalize(vec3(pixel.xy, 3.0));
 
         var t = -max_distance;
 
@@ -102,22 +105,39 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             let normal = estimate_normal(hit, card_size);
             let normal_abs = abs(normal);
 
+            var sample: vec4<f32>;
+
             if (normal_abs.z > normal_abs.x && normal_abs.z > normal_abs.y) {
                 let local_uv = hit.xy / (2.0 * card_size) + vec2(0.5, 0.5);
                 let uv_offset = vec2(0.5, 0.5) - card_size;
-                let final_uv = uv_offset + local_uv * card_size * 2.0;
+                var final_uv = uv_offset + local_uv * card_size * 2.0;
+                final_uv.y = 1.0 - final_uv.y;
 
                 if (normal.z < 0.0) {
                     // Front
-                    color += textureSampleLevel(u_base, u_sampler, final_uv, 0.0);
+                    sample = textureSampleLevel(u_base, u_sampler, final_uv, 0.0);
                 } else {
                     // Back
-                    color += textureSampleLevel(u_back, u_sampler, vec2(1.0 - final_uv.x, final_uv.y), 0.0);
+                    sample = textureSampleLevel(u_back, u_sampler, vec2(1.0 - final_uv.x, final_uv.y), 0.0);
                 }
             } else {
                 // Side edge
-                color += vec4(0.5, 0.5, 0.5, abs((rotation * normal).z));
+                sample = vec4(0.5, 0.5, 0.5, abs((rotation * normal).z));
             }
+
+            let hit_rotated = rotation * hit;
+            let normal_rotated = rotation * normal;
+            let light_dir = normalize(light - hit_rotated);
+            let light_strength = light_power / pow(distance(light, hit_rotated), 2.0);
+
+            let ambient = 0.05;
+            let diffusion = clamp(dot(normal_rotated, light_dir), 0.0, 1.0) * light_strength;
+            let specular = pow(
+                clamp(dot(normal_rotated, normalize(light_dir - ray_direction)), 0.0, 1.0),
+                60.0,
+            ) * light_strength;
+
+            color += vec4(sample.xyz * (ambient + diffusion) + specular, sample.a);
         }
     }
     }
