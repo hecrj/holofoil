@@ -51,21 +51,15 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    const n_samples: i32 = 4;
+    const n_samples: i32 = 2;
+    const max_distance: f32 = 2.0;
 
     let max_dimension = f32(max(input.size.x, input.size.y));
-    let max_distance = max_dimension * 1.2;
     let card_size = input.size / (2.0 * max_dimension);
 
     let camera = vec3(0.0, 0.0, -max_distance);
-    let fov = radians(60.00);
+    let fov = radians(80.00);
     let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
-    let pixel = vec2(
-        2.0 * input.position.x - f32(uniforms.resolution.x),
-        // f32(uniforms.resolution.y) - 2.0 * input.position.y + 1.0
-        2.0 * input.position.y - f32(uniforms.resolution.y),
-    );
-    let screen = vec3(pixel.x * tan(fov / 2.0), pixel.y * tan(fov / 2.0), -1.0);
 
     let cos_rot = cos(input.rotation);
     let sin_rot = sin(input.rotation);
@@ -80,27 +74,31 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     for (var m = 0; m < n_samples; m++) {
     for (var n = 0; n < n_samples; n++) {
-        let o = vec3(f32(m), f32(n), 0.0) / f32(n_samples) - 0.5;
+        let o = vec2(f32(m), f32(n)) / f32(n_samples) - 0.5;
         let ray_origin = camera;
-        let ray_target = screen + o;
+
+        let pixel = vec2<f32>(
+            2.0 * (input.position.x + o.x) - f32(uniforms.resolution.x),
+            -f32(uniforms.resolution.y) + 2.0 * (input.position.y + o.y)
+        ) / f32(uniforms.resolution.y);
+        let ray_target = vec3(pixel.x, pixel.y, 1.0);
         let ray_direction = normalize(ray_target - ray_origin);
 
         var t = -max_distance;
 
         for (var i = 0; i < 64; i++) {
-            let p = transpose(rotation) * ((ray_origin + ray_direction * t) / max_dimension);
+            let p = transpose(rotation) * (ray_origin + ray_direction * t);
             let d = sd_card(p, card_size);
 
-            if d < 0.0001 || t > 2.0 * max_distance {
+            if d < 0.00001 || t > 2.0 * max_distance {
                 break;
             }
 
-            t += d * max_dimension;
+            t += d;
         }
 
-
         if t <= 2.0 * max_distance {
-            let hit = transpose(rotation) * ((ray_origin + ray_direction * t) / max_dimension);
+            let hit = transpose(rotation) * (ray_origin + ray_direction * t);
             let normal = estimate_normal(hit, card_size);
             let normal_abs = abs(normal);
 
@@ -116,9 +114,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     // Back
                     color += textureSampleLevel(u_back, u_sampler, vec2(1.0 - final_uv.x, final_uv.y), 0.0);
                 }
-            } else if (normal * rotation).z > 0.0 {
+            } else {
                 // Side edge
-                color += vec4(0.5, 0.5, 0.5, 1.0);
+                color += vec4(0.5, 0.5, 0.5, abs((rotation * normal).z));
             }
         }
     }
@@ -142,7 +140,7 @@ fn sd_card(p: vec3<f32>, size: vec2<f32>) -> f32 {
 }
 
 fn sd_rounded_box(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
-    let q = abs(p) - b + vec2(r);
+    let q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
 }
 
@@ -152,7 +150,7 @@ fn extrude(p: vec3<f32>, sdf: f32, h: f32) -> f32 {
 }
 
 fn estimate_normal(p: vec3<f32>, size: vec2<f32>) -> vec3<f32> {
-    let eps = 0.0001;
+    let eps = 0.00001;
 
     return normalize(vec3(
         sd_card(p + vec3(eps, 0, 0), size) - sd_card(p - vec3(eps, 0, 0), size),
