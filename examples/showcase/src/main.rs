@@ -18,7 +18,7 @@ pub fn main() {
     let proxy = event_loop.create_proxy();
 
     #[cfg(not(target_arch = "wasm32"))]
-    {
+    let _watcher = {
         use notify::Watcher as _;
         use std::path::PathBuf;
 
@@ -43,13 +43,16 @@ pub fn main() {
                 proxy.send_event(Event::Reload).unwrap();
             })
             .unwrap();
+
         watcher
             .watch(
-                &PathBuf::from(format!("{}/src", env!("CARGO_MANIFEST_DIR"))),
+                &PathBuf::from(dbg!(format!("{}/../../src", env!("CARGO_MANIFEST_DIR")))),
                 notify::RecursiveMode::NonRecursive,
             )
             .unwrap();
-    }
+
+        watcher
+    };
 
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
