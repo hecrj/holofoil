@@ -59,11 +59,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let card_size = input.size / (2.0 * max_dimension);
 
     let camera = vec3(0.0, 0.0, -max_distance);
-    let fov = radians(80.00);
     let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
 
-    let light = vec3(3.0, 8.0, -20.0);
-    let light_power = 600.0;
+    let light = vec3(3.0, 12.0, -20.0);
+    let light_power = 800.0;
 
     // let cos_rot = cos(radians(10));
     // let sin_rot = sin(radians(10));
@@ -105,13 +104,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         if t <= 2.0 * max_distance {
             let hit = transpose(rotation) * (ray_origin + ray_direction * t);
+            let hit_rotated = rotation * hit;
             let normal = estimate_normal(hit, card_size);
             let normal_abs = abs(normal);
             let N = rotation * normal;
+            let V = -ray_direction;
+            let L = normalize(light - hit_rotated);
+            let light_strength = light_power / pow(distance(light, hit_rotated), 2.0);
+            let light_angle = clamp(dot(N, normalize(L + V)), 0.0, 1.0);
 
             var sample: vec4<f32>;
             var specular_color = vec3(1.0, 1.0, 1.0);
-            var shininess = 100.0;
+            var foil_color: vec3<f32>;
 
             if (normal_abs.z > normal_abs.x && normal_abs.z > normal_abs.y) {
                 let local_uv = hit.xy / (2.0 * card_size) + vec2(0.5, 0.5);
@@ -123,13 +127,52 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     // Front
                     sample = textureSampleLevel(u_base, u_sampler, final_uv, 0.0);
 
+                    let lumi = luminance(sample.xyz);
                     let etch = textureSampleLevel(u_etch, u_sampler, final_uv, 0.0).r;
                     let foil = textureSampleLevel(u_foil, u_sampler, final_uv, 0.0).r;
-                    let purity = clamp(foil - etch, 0.0, 1.0);
-                    let angle = clamp(dot(N, -ray_direction), 0.0, 1.0);                    
+                    let purity = clamp(foil - 3.0 * etch, 0.0, 1.0);
 
-                    specular_color = iridescence(angle) * purity;
-                    shininess -= 90.0 * (1.0 - purity);
+                    if purity > 0.1 && lumi > 0.05 {
+                        let angle = clamp(dot(N, V), 0.0, 1.0);
+                        let strength = pow(light_angle, 3.0 + 20.0 * etch);
+
+                        foil_color = iridescence(angle) * purity * strength;
+
+                        // Foil flakes
+                        // Inspired by https://www.4rknova.com/blog/2025/08/30/foil-sticker
+                        if purity > 0.2 {
+                            let uFlakeReduction = 0.1;
+                            let uFlakeThreshold = 0.5;
+                            let uFlakeSize = 800.0;
+
+                            // Procedural flake mask
+                            let flake = hash(floor(local_uv * uFlakeSize));
+                            let flakeMask = smoothstep(uFlakeReduction, 1.0, flake);
+ 
+                            // Perturbed flake normal
+                            let angleOffset = (hash(vec2(flake, flake + 3.0)) - 0.5) * 0.25;
+                            let perturbedNormal = normalize(N + vec3(angleOffset, 0.0, angleOffset));
+ 
+                            // Reflection for sparkle
+                            let PR = reflect(-V, perturbedNormal);
+ 
+                            // Dynamic flicker factor (only brightens, never darkens)
+                            let flakePhase = hash(floor(local_uv * uFlakeSize) + floor(PR.xy * 15.0));
+                            let phaseMod = mix(1.0, 1.8, flakePhase);
+        
+                            // Core sparkle factor (glimmer preserved)
+                            var flakeSpec = pow(clamp(dot(perturbedNormal, V) * 0.5 + 0.5, 0.0, 1.0), 8.0);
+                            flakeSpec = max(flakeSpec, 0.15); // always visible
+ 
+                            let flakeIri = iridescence(dot(perturbedNormal, V));
+ 
+                            // Final intensity
+                            var flakeIntensity = flakeMask * purity * flakeSpec * phaseMod;
+                            flakeIntensity = clamp(flakeIntensity, 0.0, 1.0);
+
+                            foil_color += flakeIri * flakeIntensity * strength;
+                        }
+                    }
                 } else {
                     // Back
                     sample = textureSampleLevel(u_back, u_sampler, vec2(1.0 - final_uv.x, final_uv.y), 0.0);
@@ -139,18 +182,15 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 sample = vec4(0.5, 0.5, 0.5, abs((rotation * normal).z));
             }
 
-            let hit_rotated = rotation * hit;
-            let light_dir = normalize(light - hit_rotated);
-            let light_strength = light_power / pow(distance(light, hit_rotated), 2.0);
 
             let ambient = 0.1;
-            let diffusion = clamp(dot(N, light_dir), 0.0, 1.0) * light_strength;
+            let diffusion = clamp(dot(N, L), 0.0, 1.0) * light_strength;
             let specular = pow(
-                clamp(dot(N, normalize(light_dir - ray_direction)), 0.0, 1.0),
-                shininess,
+                clamp(dot(N, normalize(L + V)), 0.0, 1.0),
+                150.0,
             ) * light_strength;
 
-            color += vec4(sample.xyz * (ambient + diffusion) + specular_color * specular, sample.a);
+            color += vec4(sample.xyz * (ambient + diffusion) + specular_color * specular + foil_color, sample.a);
         }
     }
     }
@@ -198,4 +238,12 @@ fn iridescence(angle: f32) -> vec3<f32> {
     let rainbow = 0.5 + 0.5 * vec3(sin(phase), sin(phase + 2.094), sin(phase + 4.188));
 
     return mix(vec3(1.0), rainbow, 1.0);
+}
+
+fn hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+fn luminance(color: vec3<f32>) -> f32 {
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
 }
