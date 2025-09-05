@@ -1,4 +1,4 @@
-use holofoil::wgpu::{self, Adapter, Device, Queue, Surface, TextureFormat};
+use holofoil::wgpu::{self, Device, Queue, Surface, TextureFormat};
 use holofoil::{Bytes, Card, Layer, Pipeline, Structure};
 
 use winit::application::ApplicationHandler;
@@ -84,10 +84,10 @@ enum Event {
 
 #[derive(Debug)]
 struct Boot {
-    adapter: Adapter,
     device: Device,
     queue: Queue,
     surface: Surface<'static>,
+    format: TextureFormat,
     window: Arc<Window>,
 }
 
@@ -146,12 +146,24 @@ impl ApplicationHandler<Event> for Showcase {
                 .await
                 .unwrap();
 
+            let format = {
+                let capabilities = surface.get_capabilities(&adapter);
+
+                capabilities
+                    .formats
+                    .iter()
+                    .copied()
+                    .find(wgpu::TextureFormat::is_srgb)
+                    .or(capabilities.formats.first().copied())
+                    .unwrap()
+            };
+
             proxy
                 .send_event(Event::Boot(Boot {
-                    adapter,
                     device,
                     queue,
                     surface,
+                    format,
                     window,
                 }))
                 .unwrap();
@@ -259,14 +271,13 @@ impl ApplicationHandler<Event> for Showcase {
 
         match event {
             Event::Boot(Boot {
-                adapter,
                 device,
                 queue,
                 surface,
+                format,
                 window,
             }) => {
                 let size = window.inner_size();
-                let format = surface.get_capabilities(&adapter).formats[0];
 
                 let pipeline = Pipeline::new(
                     &device,
