@@ -63,8 +63,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
 
     let light = vec3(3.0, 8.0, -20.0);
-    let light_power = 300.0;
+    let light_power = 600.0;
 
+    // let cos_rot = cos(radians(10));
+    // let sin_rot = sin(radians(10));
     let cos_rot = cos(input.rotation);
     let sin_rot = sin(input.rotation);
 
@@ -105,8 +107,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             let hit = transpose(rotation) * (ray_origin + ray_direction * t);
             let normal = estimate_normal(hit, card_size);
             let normal_abs = abs(normal);
+            let N = rotation * normal;
 
             var sample: vec4<f32>;
+            var specular_color = vec3(1.0, 1.0, 1.0);
+            var shininess = 100.0;
 
             if (normal_abs.z > normal_abs.x && normal_abs.z > normal_abs.y) {
                 let local_uv = hit.xy / (2.0 * card_size) + vec2(0.5, 0.5);
@@ -117,6 +122,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 if (normal.z < 0.0) {
                     // Front
                     sample = textureSampleLevel(u_base, u_sampler, final_uv, 0.0);
+
+                    let etch = textureSampleLevel(u_etch, u_sampler, final_uv, 0.0).r;
+                    let foil = textureSampleLevel(u_foil, u_sampler, final_uv, 0.0).r;
+                    let purity = clamp(foil - etch, 0.0, 1.0);
+                    let angle = clamp(dot(N, -ray_direction), 0.0, 1.0);                    
+
+                    specular_color = iridescence(angle) * purity;
+                    shininess -= 90.0 * (1.0 - purity);
                 } else {
                     // Back
                     sample = textureSampleLevel(u_back, u_sampler, vec2(1.0 - final_uv.x, final_uv.y), 0.0);
@@ -127,18 +140,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             }
 
             let hit_rotated = rotation * hit;
-            let normal_rotated = rotation * normal;
             let light_dir = normalize(light - hit_rotated);
             let light_strength = light_power / pow(distance(light, hit_rotated), 2.0);
 
-            let ambient = 0.05;
-            let diffusion = clamp(dot(normal_rotated, light_dir), 0.0, 1.0) * light_strength;
+            let ambient = 0.1;
+            let diffusion = clamp(dot(N, light_dir), 0.0, 1.0) * light_strength;
             let specular = pow(
-                clamp(dot(normal_rotated, normalize(light_dir - ray_direction)), 0.0, 1.0),
-                60.0,
+                clamp(dot(N, normalize(light_dir - ray_direction)), 0.0, 1.0),
+                shininess,
             ) * light_strength;
 
-            color += vec4(sample.xyz * (ambient + diffusion) + specular, sample.a);
+            color += vec4(sample.xyz * (ambient + diffusion) + specular_color * specular, sample.a);
         }
     }
     }
@@ -178,4 +190,12 @@ fn estimate_normal(p: vec3<f32>, size: vec2<f32>) -> vec3<f32> {
         sd_card(p + vec3(0, eps, 0), size) - sd_card(p - vec3(0, eps, 0), size),
         sd_card(p + vec3(0, 0, eps), size) - sd_card(p - vec3(0, 0, eps), size)
     ));
+}
+
+fn iridescence(angle: f32) -> vec3<f32> {
+    let thickness = 100.0 + 600.0 * (1.0 - angle);
+    let phase = 6.28318 * thickness * 0.01;
+    let rainbow = 0.5 + 0.5 * vec3(sin(phase), sin(phase + 2.094), sin(phase + 4.188));
+
+    return mix(vec3(1.0), rainbow, 1.0);
 }

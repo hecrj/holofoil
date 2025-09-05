@@ -1,10 +1,11 @@
 use holofoil::wgpu::{self, Device, Queue, Surface, TextureFormat};
-use holofoil::{Bytes, Card, Layer, Pipeline, Structure};
+use holofoil::{Bytes, Card, Layer, Mask, Pipeline, Structure};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use std::sync::Arc;
@@ -46,7 +47,7 @@ pub fn main() {
 
         watcher
             .watch(
-                &PathBuf::from(dbg!(format!("{}/../../src", env!("CARGO_MANIFEST_DIR")))),
+                &PathBuf::from(format!("{}/../../src", env!("CARGO_MANIFEST_DIR"))),
                 notify::RecursiveMode::NonRecursive,
             )
             .unwrap();
@@ -72,9 +73,10 @@ enum Showcase {
         format: TextureFormat,
         pipeline: Pipeline,
         card: Card,
-        start: Instant,
         window: Arc<Window>,
         size: PhysicalSize<u32>,
+        started_at: Instant,
+        rotation: Rotation,
     },
 }
 
@@ -83,6 +85,12 @@ enum Event {
     Boot(Boot),
     #[cfg(not(target_arch = "wasm32"))]
     Reload,
+}
+
+#[derive(Debug)]
+enum Rotation {
+    Full,
+    Front,
 }
 
 #[derive(Debug)]
@@ -202,7 +210,8 @@ impl ApplicationHandler<Event> for Showcase {
             surface,
             pipeline,
             card,
-            start,
+            started_at,
+            rotation,
             ..
         } = self
         else {
@@ -224,11 +233,30 @@ impl ApplicationHandler<Event> for Showcase {
 
                 const ROTATION_SPEED: f32 = std::f32::consts::PI / 4.0;
 
+                let (start, range, ping_pong) = match rotation {
+                    Rotation::Full => (0.0, 2.0 * std::f32::consts::PI, false),
+                    Rotation::Front => (
+                        -std::f32::consts::PI / 4.0,
+                        std::f32::consts::PI / 2.0,
+                        true,
+                    ),
+                };
+
+                let rotation = ROTATION_SPEED * started_at.elapsed().as_secs_f32();
+
+                let direction = ((rotation / range) as u32 % 2 == 0)
+                    .then_some(1.0)
+                    .unwrap_or(-1.0);
+
                 card.prepare(
                     queue,
                     0.0,
                     0.0,
-                    ROTATION_SPEED * start.elapsed().as_secs_f32(),
+                    if !ping_pong || direction > 0.0 {
+                        start + (rotation % range)
+                    } else {
+                        (start + range) - (rotation % range)
+                    },
                 );
 
                 let mut encoder =
@@ -259,10 +287,26 @@ impl ApplicationHandler<Event> for Showcase {
 
                 window.request_redraw();
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match logical_key {
+                Key::Named(NamedKey::F1) => {
+                    *rotation = match rotation {
+                        Rotation::Full => Rotation::Front,
+                        Rotation::Front => Rotation::Full,
+                    };
+                }
+                _ => {}
+            },
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-
             _ => {}
         }
     }
@@ -302,7 +346,8 @@ impl ApplicationHandler<Event> for Showcase {
                     format,
                     pipeline,
                     card,
-                    start: Instant::now(),
+                    started_at: Instant::now(),
+                    rotation: Rotation::Full,
                 };
 
                 self.configure_surface();
@@ -367,6 +412,19 @@ impl Showcase {
     }
 }
 
+fn umbreon() -> Structure {
+    Structure {
+        base: load_image(include_bytes!("../assets/sv8-5_en_161_std.png")),
+        foil: Some(load_mask(include_bytes!(
+            "../assets/sv8-5_en_161_std.foil.png"
+        ))),
+        etching: Some(load_mask(include_bytes!(
+            "../assets/sv8-5_en_161_std.etch.png"
+        ))),
+        width: 733,
+    }
+}
+
 fn load_image(bytes: &[u8]) -> Layer {
     use std::io;
 
@@ -385,15 +443,18 @@ fn load_image(bytes: &[u8]) -> Layer {
     }
 }
 
-fn umbreon() -> Structure {
-    Structure {
-        base: load_image(include_bytes!("../assets/sv8-5_en_161_std.png")),
-        foil: Some(load_image(include_bytes!(
-            "../assets/sv8-5_en_161_std.foil.png"
-        ))),
-        etching: Some(load_image(include_bytes!(
-            "../assets/sv8-5_en_161_std.etch.png"
-        ))),
-        width: 733,
+fn load_mask(bytes: &[u8]) -> Mask {
+    use std::io;
+
+    let decoder = png::Decoder::new(io::Cursor::new(bytes));
+    let mut reader = decoder.read_info().unwrap();
+    let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+
+    let metadata = reader.next_frame(&mut rgba).unwrap();
+    let bytes = &rgba[..metadata.buffer_size()];
+
+    Mask {
+        pixels: Bytes::copy_from_slice(bytes),
+        size: metadata.width,
     }
 }

@@ -318,8 +318,8 @@ impl Card {
 #[derive(Debug, Clone)]
 pub struct Structure {
     pub base: Layer,
-    pub foil: Option<Layer>,
-    pub etching: Option<Layer>,
+    pub foil: Option<Mask>,
+    pub etching: Option<Mask>,
     pub width: u32,
 }
 
@@ -351,6 +351,38 @@ impl Layer {
             },
             wgpu::util::TextureDataOrder::LayerMajor,
             &self.rgba,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Mask {
+    pub pixels: Bytes,
+    pub size: u32,
+}
+
+impl Mask {
+    fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
+        use wgpu::util::DeviceExt;
+
+        device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: self.size,
+                    height: self.size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &self.pixels,
         )
     }
 }
