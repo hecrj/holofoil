@@ -108,8 +108,14 @@ struct Holofoil {
     delta: Duration,
 }
 
+struct Renderer {
+    pipeline: Pipeline,
+    #[cfg(not(target_arch = "wasm32"))]
+    watcher: Mutex<Watcher>,
+}
+
 impl shader::Primitive for Holofoil {
-    type Renderer = Pipeline;
+    type Renderer = Renderer;
 
     fn initialize(
         &self,
@@ -117,17 +123,19 @@ impl shader::Primitive for Holofoil {
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) -> Self::Renderer {
-        Pipeline::new(
-            device,
-            queue,
-            format,
-            load_image(include_bytes!("../assets/pokemon_tcg_back.png")),
-        )
+        #[cfg(not(target_arch = "wasm32"))]
+        let watcher = Watcher::new(device, queue, format);
+
+        Renderer {
+            pipeline: pipeline(device, queue, format),
+            #[cfg(not(target_arch = "wasm32"))]
+            watcher: Mutex::new(watcher),
+        }
     }
 
     fn prepare(
         &self,
-        pipeline: &mut Pipeline,
+        renderer: &mut Renderer,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bounds: &Rectangle,
@@ -135,10 +143,16 @@ impl shader::Primitive for Holofoil {
     ) {
         let mut cache = self.cache.lock().unwrap();
 
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(pipeline) = renderer.watcher.lock().unwrap().latest() {
+            renderer.pipeline = pipeline;
+            cache.card = None;
+        }
+
         let mut card = cache
             .card
             .take()
-            .unwrap_or_else(|| pipeline.upload(device, queue, &self.card));
+            .unwrap_or_else(|| renderer.pipeline.upload(device, queue, &self.card));
 
         const ROTATION_SPEED: f32 = std::f32::consts::PI / 4.0;
 
@@ -153,7 +167,7 @@ impl shader::Primitive for Holofoil {
 
     fn draw(
         &self,
-        pipeline: &Pipeline,
+        renderer: &Renderer,
         render_pass: &mut wgpu::RenderPass<'_>,
         clip_bounds: &Rectangle<u32>,
     ) -> bool {
@@ -174,7 +188,7 @@ impl shader::Primitive for Holofoil {
             clip_bounds.height,
         );
 
-        pipeline.render(
+        renderer.pipeline.render(
             queue,
             render_pass,
             (cache.resolution.width, cache.resolution.height),
@@ -202,6 +216,69 @@ impl Cache {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct Watcher {
+    _raw: notify::RecommendedWatcher,
+    pipelines: std::sync::mpsc::Receiver<Pipeline>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Watcher {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        use notify::Watcher as _;
+        use std::path::PathBuf;
+        use std::sync::mpsc;
+        use std::thread;
+
+        let (sender, receiver) = mpsc::channel();
+        let device = device.clone();
+        let queue = queue.clone();
+
+        let mut watcher =
+            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+                let Ok(event) = event else {
+                    return;
+                };
+
+                if !event.paths.iter().any(|path| path.ends_with("shader.wgsl")) {
+                    return;
+                }
+
+                let (notify::EventKind::Modify(notify::event::ModifyKind::Data(_))
+                | notify::EventKind::Remove(notify::event::RemoveKind::File)) = event.kind
+                else {
+                    return;
+                };
+
+                let device = device.clone();
+                let queue = queue.clone();
+
+                if let Ok(pipeline) =
+                    thread::spawn(move || pipeline(&device, &queue, format)).join()
+                {
+                    let _ = sender.send(pipeline);
+                }
+            })
+            .unwrap();
+
+        watcher
+            .watch(
+                &PathBuf::from(format!("{}/../../src", env!("CARGO_MANIFEST_DIR"))),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+
+        Self {
+            _raw: watcher,
+            pipelines: receiver,
+        }
+    }
+
+    fn latest(&mut self) -> Option<Pipeline> {
+        self.pipelines.try_iter().last()
+    }
+}
+
 fn umbreon() -> Structure {
     Structure {
         base: load_image(include_bytes!("../assets/sv8-5_en_161_std.png")),
@@ -213,6 +290,15 @@ fn umbreon() -> Structure {
         ))),
         width: 733,
     }
+}
+
+fn pipeline(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Pipeline {
+    Pipeline::new(
+        device,
+        queue,
+        format,
+        load_image(include_bytes!("../assets/pokemon_tcg_back.png")),
+    )
 }
 
 fn load_image(bytes: &[u8]) -> Layer {
