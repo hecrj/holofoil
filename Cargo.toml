@@ -17,12 +17,13 @@ holofoil = { path = "." }
 bytemuck = "1"
 bytes = "1"
 wgpu = "26"
-winit = "0.30"
 
-png = "0.18"
-pollster = "0.4"
-notify = "8"
 console_error_panic_hook = "0.1"
-wasm-bindgen-futures = "0.4"
-web-time = "1"
-web-sys = "0.3"
+notify = "8"
+png = "0.18"
+
+iced.version = "0.14.0-dev"
+iced.default-features = false
+
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced.git" }

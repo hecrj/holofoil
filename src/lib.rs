@@ -207,8 +207,8 @@ impl Pipeline {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        definition: Structure,
-    ) -> Result<Card, wgpu::Error> {
+        definition: &Structure,
+    ) -> Card {
         let instance = device.create_buffer(&wgpu::wgt::BufferDescriptor {
             label: Some("holofoil instance buffer"),
             size: mem::size_of::<Instance>() as u64,
@@ -217,9 +217,13 @@ impl Pipeline {
         });
 
         let base = definition.base.upload(device, queue);
-        let foil = definition.foil.map(|foil| foil.upload(device, queue));
+        let foil = definition
+            .foil
+            .as_ref()
+            .map(|foil| foil.upload(device, queue));
         let etching = definition
             .etching
+            .as_ref()
             .map(|etching| etching.upload(device, queue));
 
         let base_view = base.create_view(&wgpu::TextureViewDescriptor::default());
@@ -255,7 +259,7 @@ impl Pipeline {
             ],
         });
 
-        Ok(Card {
+        Card {
             instance,
             base,
             foil,
@@ -263,7 +267,7 @@ impl Pipeline {
             binding,
             width: definition.width,
             height: definition.base.size,
-        })
+        }
     }
 
     pub fn render(
