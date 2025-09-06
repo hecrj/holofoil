@@ -1,6 +1,7 @@
 use holofoil::wgpu::{self, Device, Queue, Surface, TextureFormat};
 use holofoil::{Bytes, Card, Layer, Mask, Pipeline, Structure};
 
+use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -9,7 +10,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use std::sync::Arc;
-use web_time::Instant;
+use std::thread;
 
 pub fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -67,6 +68,7 @@ enum Showcase {
         proxy: EventLoopProxy<Event>,
     },
     Ready {
+        proxy: EventLoopProxy<Event>,
         device: Device,
         queue: Queue,
         surface: Surface<'static>,
@@ -85,6 +87,11 @@ enum Event {
     Boot(Boot),
     #[cfg(not(target_arch = "wasm32"))]
     Reload,
+    #[cfg(not(target_arch = "wasm32"))]
+    Reloaded {
+        pipeline: Pipeline,
+        card: Card,
+    },
 }
 
 #[derive(Debug)]
@@ -327,6 +334,10 @@ impl ApplicationHandler<Event> for Showcase {
                 format,
                 window,
             }) => {
+                let Self::Loading { proxy } = self else {
+                    return;
+                };
+
                 let size = window.inner_size();
 
                 let pipeline = Pipeline::new(
@@ -341,6 +352,7 @@ impl ApplicationHandler<Event> for Showcase {
                 window.request_redraw();
 
                 *self = Self::Ready {
+                    proxy: proxy.clone(),
                     device,
                     queue,
                     window,
@@ -361,22 +373,45 @@ impl ApplicationHandler<Event> for Showcase {
                     device,
                     queue,
                     format,
-                    pipeline,
-                    card,
+                    proxy,
                     ..
                 } = self
                 else {
                     return;
                 };
 
-                *pipeline = Pipeline::new(
-                    device,
-                    queue,
-                    *format,
-                    load_image(include_bytes!("../assets/pokemon_tcg_back.png")),
-                );
+                let device = device.clone();
+                let queue = queue.clone();
+                let format = *format;
+                let proxy = proxy.clone();
 
-                *card = pipeline.upload(device, queue, umbreon()).unwrap();
+                thread::spawn(move || {
+                    let pipeline = Pipeline::new(
+                        &device,
+                        &queue,
+                        format,
+                        load_image(include_bytes!("../assets/pokemon_tcg_back.png")),
+                    );
+
+                    let card = pipeline.upload(&device, &queue, umbreon()).unwrap();
+                    queue.submit([]);
+
+                    proxy
+                        .send_event(Event::Reloaded { pipeline, card })
+                        .unwrap();
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Event::Reloaded {
+                pipeline: new_pipeline,
+                card: new_card,
+            } => {
+                let Self::Ready { pipeline, card, .. } = self else {
+                    return;
+                };
+
+                *pipeline = new_pipeline;
+                *card = new_card;
             }
         }
     }
