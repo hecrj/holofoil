@@ -109,25 +109,30 @@ struct Holofoil {
 }
 
 impl shader::Primitive for Holofoil {
-    fn prepare(
+    type Renderer = Pipeline;
+
+    fn initialize(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        storage: &mut shader::Storage,
+    ) -> Self::Renderer {
+        Pipeline::new(
+            device,
+            queue,
+            format,
+            load_image(include_bytes!("../assets/pokemon_tcg_back.png")),
+        )
+    }
+
+    fn prepare(
+        &self,
+        pipeline: &mut Pipeline,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         bounds: &Rectangle,
         viewport: &shader::Viewport,
     ) {
-        if !storage.has::<Pipeline>() {
-            storage.store(Pipeline::new(
-                device,
-                queue,
-                format,
-                load_image(include_bytes!("../assets/pokemon_tcg_back.png")),
-            ));
-        }
-
-        let pipeline = storage.get::<Pipeline>().unwrap();
         let mut cache = self.cache.lock().unwrap();
 
         let mut card = cache
@@ -146,39 +151,21 @@ impl shader::Primitive for Holofoil {
         }
     }
 
-    fn render(
+    fn draw(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        storage: &shader::Storage,
-        target: &wgpu::TextureView,
+        pipeline: &Pipeline,
+        render_pass: &mut wgpu::RenderPass<'_>,
         clip_bounds: &Rectangle<u32>,
-    ) {
-        let pipeline = storage.get::<Pipeline>().unwrap();
+    ) -> bool {
         let cache = self.cache.lock().unwrap();
 
         let Some(card) = &cache.card else {
-            return;
+            return true;
         };
 
         let Some(queue) = &cache.queue else {
-            return;
+            return true;
         };
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("holofoil shader widget"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
 
         render_pass.set_scissor_rect(
             clip_bounds.x,
@@ -189,10 +176,12 @@ impl shader::Primitive for Holofoil {
 
         pipeline.render(
             queue,
-            &mut render_pass,
+            render_pass,
             (cache.resolution.width, cache.resolution.height),
             card,
         );
+
+        true
     }
 }
 
