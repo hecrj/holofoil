@@ -242,11 +242,13 @@ impl ApplicationHandler<Event> for Showcase {
                     ),
                 };
 
-                let rotation = ROTATION_SPEED * started_at.elapsed().as_secs_f32();
+                let rotation =
+                    (ROTATION_SPEED * started_at.elapsed().as_secs_f32() * 1000.0) as i32;
 
-                let direction = ((rotation / range) as u32 % 2 == 0)
-                    .then_some(1.0)
-                    .unwrap_or(-1.0);
+                let start = (start * 1000.0) as i32;
+                let range = (range * 1000.0) as i32;
+
+                let direction = (rotation / range % 2 == 0).then_some(1.0).unwrap_or(-1.0);
 
                 card.prepare(
                     queue,
@@ -256,7 +258,8 @@ impl ApplicationHandler<Event> for Showcase {
                         start + (rotation % range)
                     } else {
                         (start + range) - (rotation % range)
-                    },
+                    } as f32
+                        / 1000.0,
                 );
 
                 let mut encoder =
