@@ -111,7 +111,7 @@ struct Holofoil {
 struct Renderer {
     pipeline: Pipeline,
     #[cfg(not(target_arch = "wasm32"))]
-    watcher: Mutex<Watcher>,
+    watcher: Watcher,
 }
 
 impl shader::Primitive for Holofoil {
@@ -129,7 +129,7 @@ impl shader::Primitive for Holofoil {
         Renderer {
             pipeline: pipeline(device, queue, format),
             #[cfg(not(target_arch = "wasm32"))]
-            watcher: Mutex::new(watcher),
+            watcher,
         }
     }
 
@@ -144,7 +144,7 @@ impl shader::Primitive for Holofoil {
         let mut cache = self.cache.lock().unwrap();
 
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(pipeline) = renderer.watcher.lock().unwrap().latest() {
+        if let Some(pipeline) = renderer.watcher.latest() {
             renderer.pipeline = pipeline;
             cache.card = None;
         }
@@ -219,7 +219,7 @@ impl Cache {
 #[cfg(not(target_arch = "wasm32"))]
 struct Watcher {
     _raw: notify::RecommendedWatcher,
-    pipelines: std::sync::mpsc::Receiver<Pipeline>,
+    pipelines: Mutex<std::sync::mpsc::Receiver<Pipeline>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -270,12 +270,12 @@ impl Watcher {
 
         Self {
             _raw: watcher,
-            pipelines: receiver,
+            pipelines: Mutex::new(receiver),
         }
     }
 
     fn latest(&mut self) -> Option<Pipeline> {
-        self.pipelines.try_iter().last()
+        self.pipelines.lock().unwrap().try_iter().last()
     }
 }
 
