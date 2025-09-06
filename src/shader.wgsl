@@ -62,10 +62,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
 
     let light = vec3(3.0, 10.0, -20.0);
-    let light_power = 600.0;
+    let light_power = 700.0;
 
-    // let cos_rot = cos(radians(10));
-    // let sin_rot = sin(radians(10));
+    // let cos_rot = cos(radians(17));
+    // let sin_rot = sin(radians(17));
     let cos_rot = cos(input.rotation);
     let sin_rot = sin(input.rotation);
 
@@ -133,15 +133,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     let purity = clamp(foil - 3.0 * etch, 0.0, 1.0);
 
                     if purity > 0.1 && lumi > 0.05 {
+                        let strength = pow(light_angle, 48.0) * 6.0;
                         let angle = clamp(dot(N, V), 0.0, 1.0);
-                        foil_color = iridescence(angle) * purity;
+
+                        foil_color = mix(sample.xyz, iridescence(angle), 0.4) * purity * strength;
+                        specular_color = vec3(0.0, 0.0, 0.0);
 
                         // Foil flakes
                         // Inspired by https://www.4rknova.com/blog/2025/08/30/foil-sticker
                         if purity > 0.2 {
                             let uFlakeReduction = 0.1;
                             let uFlakeThreshold = 0.5;
-                            let uFlakeSize = 800.0;
+                            let uFlakeSize = 500.0;
 
                             // Procedural flake mask
                             let flake = hash(floor(local_uv * uFlakeSize));
@@ -168,13 +171,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                             var flakeIntensity = flakeMask * purity * flakeSpec * phaseMod;
                             flakeIntensity = clamp(flakeIntensity, 0.0, 1.0);
 
-                            foil_color += flakeIri * flakeIntensity;
+                            foil_color += mix(sample.xyz, flakeIri, 0.6) * flakeIntensity;
                         }
 
-                        let fresnel = pow(1.0 - clamp(dot(V, N), 0.0, 1.0), 5.0);
-                        let strength = pow(light_angle, 96) * 5.0 * (1.0 + fresnel * 2.0);
-
-                        foil_color *= strength;
+                        foil_color *= light_power * 0.001;
                     }
                 } else {
                     // Back
@@ -188,10 +188,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
             let ambient = 0.1;
             let diffusion = clamp(dot(N, L), 0.0, 1.0) * light_strength;
-            let specular = pow(
-                clamp(dot(N, normalize(L + V)), 0.0, 1.0),
-                48.0,
-            ) * light_strength * 0.05;
+            let specular = pow(light_angle, 32.0) * light_strength * 0.05;
 
             color += vec4(sample.xyz * (ambient + diffusion) + specular_color * specular + foil_color, sample.a);
         }
