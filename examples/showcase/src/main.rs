@@ -104,8 +104,9 @@ impl Showcase {
 
                     let delta = ROTATION_SPEED * now.duration_since(*last_tick).as_secs_f32();
 
-                    self.viewer.rotation =
-                        Quaternion::from_radians(Vector::Y, delta) * self.viewer.rotation;
+                    self.viewer.rotation = (Quaternion::from_radians(Vector::Y, delta)
+                        * self.viewer.rotation)
+                        .normalize();
 
                     self.viewer.euler.y += delta;
 
