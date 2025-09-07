@@ -1,5 +1,5 @@
 use holofoil::{
-    Bytes, Card, Layer, Mask, Parameters, Pipeline, Radians, Rotation, Structure, Viewport,
+    Bytes, Card, Layer, Mask, Parameters, Pipeline, Quaternion, Structure, Vector, Viewport,
 };
 
 use iced::mouse;
@@ -69,7 +69,7 @@ enum Mode {
 enum Message {
     Booted,
     FrameRequested,
-    RotationChanged(Rotation),
+    RotationChanged(Vector),
     ToggleAutoRotate(bool),
 }
 
@@ -80,7 +80,8 @@ impl Showcase {
                 viewer: Viewer {
                     card: Arc::new(umbreon()),
                     cache: Arc::new(Mutex::new(Cache::new())),
-                    rotation: Rotation::default(),
+                    rotation: Quaternion::default(),
+                    euler: Vector::default(),
                 },
                 mode: Mode::Idle,
             },
@@ -101,14 +102,22 @@ impl Showcase {
                 if let Mode::AutoRotate { last_tick } = &mut self.mode {
                     const ROTATION_SPEED: f32 = FRAC_PI_4;
 
-                    self.viewer.rotation.y.0 +=
-                        ROTATION_SPEED * now.duration_since(*last_tick).as_secs_f32();
+                    let delta = ROTATION_SPEED * now.duration_since(*last_tick).as_secs_f32();
+
+                    self.viewer.rotation =
+                        Quaternion::from_radians(Vector::Y, delta) * self.viewer.rotation;
+
+                    self.viewer.euler.y += delta;
 
                     *last_tick = now;
                 }
             }
             Message::RotationChanged(rotation) => {
-                self.viewer.rotation = rotation;
+                self.viewer.rotation = Quaternion::from_radians(Vector::Y, rotation.y)
+                    * Quaternion::from_radians(Vector::X, rotation.x)
+                    * Quaternion::from_radians(Vector::Z, rotation.z);
+
+                self.viewer.euler = rotation;
                 self.mode = Mode::Idle;
             }
             Message::ToggleAutoRotate(auto_rotate) => {
@@ -136,21 +145,15 @@ impl Showcase {
     }
 
     fn controls(&self) -> Element<'_, Message> {
-        let rotation_slider =
-            |label, get: fn(Rotation) -> Radians, set: fn(Rotation, Radians) -> Rotation| {
-                labeled_slider(
-                    label,
-                    (0.0..=359.99, 0.1),
-                    get(self.viewer.rotation).0.to_degrees() % 360.0,
-                    move |angle| {
-                        Message::RotationChanged(set(
-                            self.viewer.rotation,
-                            Radians(angle.to_radians()),
-                        ))
-                    },
-                    |angle| format!("{angle:.2}°"),
-                )
-            };
+        let rotation_slider = |label, get: fn(Vector) -> f32, set: fn(Vector, f32) -> Vector| {
+            labeled_slider(
+                label,
+                (0.0..=359.99, 0.1),
+                get(self.viewer.euler).to_degrees().rem_euclid(360.0),
+                move |angle| Message::RotationChanged(set(self.viewer.euler, angle.to_radians())),
+                |angle| format!("{angle:.2}°"),
+            )
+        };
 
         column![
             row![
@@ -166,17 +169,17 @@ impl Showcase {
                 rotation_slider(
                     "X",
                     |rotation| rotation.x,
-                    |rotation, x| Rotation { x, ..rotation }
+                    |rotation, x| Vector { x, ..rotation }
                 ),
                 rotation_slider(
                     "Y",
                     |rotation| rotation.y,
-                    |rotation, y| Rotation { y, ..rotation }
+                    |rotation, y| Vector { y, ..rotation }
                 ),
                 rotation_slider(
                     "Z",
                     |rotation| rotation.z,
-                    |rotation, z| Rotation { z, ..rotation }
+                    |rotation, z| Vector { z, ..rotation }
                 )
             ]
             .spacing(5),
@@ -190,7 +193,8 @@ impl Showcase {
 struct Viewer {
     card: Arc<Structure>,
     cache: Arc<Mutex<Cache>>,
-    rotation: Rotation,
+    rotation: Quaternion,
+    euler: Vector,
 }
 
 impl shader::Program<Message> for Viewer {
@@ -215,7 +219,7 @@ impl shader::Program<Message> for Viewer {
 struct Holofoil {
     card: Arc<Structure>,
     cache: Arc<Mutex<Cache>>,
-    rotation: Rotation,
+    rotation: Quaternion,
 }
 
 struct Renderer {

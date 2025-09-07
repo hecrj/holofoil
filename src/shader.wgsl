@@ -8,15 +8,15 @@
 struct VertexInput {
     @location(0) viewport: vec4<f32>,
     @location(1) size: vec2<f32>,
-    @location(2) rotation: vec3<f32>,
+    @location(2) rotation: vec4<f32>,
     @builtin(vertex_index) index: u32,
 }
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) viewport: vec4<f32>,
-    @location(1) size: vec2<f32>,
-    @location(2) rotation: vec3<f32>,
+    @location(0) @interpolate(flat) viewport: vec4<f32>,
+    @location(1) @interpolate(flat) size: vec2<f32>,
+    @location(2) @interpolate(flat) rotation: vec4<f32>,
 }
 
 @vertex
@@ -38,20 +38,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     const n_samples: i32 = 2;
     const max_distance: f32 = 2.0;
 
-    let max_dimension = f32(max(input.size.x, input.size.y));
-    let card_size = input.size / (2.0 * max_dimension);
+    let position = input.position;
+    let viewport = input.viewport;
+    let size = input.size;
+    let rotation = input.rotation;
+
+    let max_dimension = f32(max(size.x, size.y));
+    let card_size = size / (2.0 * max_dimension);
 
     let camera = vec3(0.0, 0.0, -max_distance);
     let light = vec3(3.0, 10.0, -20.0);
     let light_power = 700.0;
-
-    let rotation = q_mul(
-        quaternion(vec3(0, 1, 0), input.rotation.y),
-        q_mul(
-            quaternion(vec3(1, 0, 0), input.rotation.x),
-            quaternion(vec3(0, 0, 1), input.rotation.z),
-        ),
-    );
 
     var color: vec4<f32>;
 
@@ -61,14 +58,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let ray_origin = camera;
 
         let pixel = vec2<f32>(
-            2.0 * (input.position.x - input.viewport.x + o.x) - input.viewport.z,
-            -2.0 * (input.position.y - input.viewport.y + o.y) + input.viewport.w,
-        ) / input.viewport.w;
+            2.0 * (position.x - viewport.x + o.x) - viewport.z,
+            -2.0 * (position.y - viewport.y + o.y) + viewport.w,
+        ) / viewport.w;
 
         let ray_direction = normalize(vec3(pixel, 3.0));
 
         var t = -max_distance;
-        var hitDetected = false;
 
         for (var i = 0; i < 64; i++) {
             let p = rotate_i(rotation, ray_origin + ray_direction * t);
@@ -227,21 +223,7 @@ fn luminance(color: vec3<f32>) -> f32 {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
 }
 
-fn quaternion(a: vec3<f32>, rotation: f32) -> vec4<f32> {
-    return vec4(a * sin(-rotation / 2.0), cos(-rotation / 2.0));
-}
-
-fn q_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
-    let v1 = a.xyz;
-    let v2 = b.xyz;
-    let w1 = a.w;
-    let w2 = b.w;
-    let xyz = w1 * v2 + w2 * v1 + cross(v1, v2);
-    let w = w1 * w2 - dot(v1, v2);
-
-    return vec4(xyz, w);
-}
-
+// Beware! Quaternions below
 fn rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     let u = q.xyz;
     let s = q.w;
@@ -250,17 +232,4 @@ fn rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 
 fn rotate_i(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     return rotate(vec4(-q.xyz, q.w), v);
-}
-
-fn q_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
-    let x = q.x;
-    let y = q.y;
-    let z = q.z;
-    let w = q.w;
-
-    return mat3x3<f32>(
-        vec3(1.0 - 2.0 * (y*y + z*z),  2.0 * (x*y - z*w),       2.0 * (x*z + y*w)),
-        vec3(2.0 * (x*y + z*w),        1.0 - 2.0 * (x*x + z*z), 2.0 * (y*z - x*w)),
-        vec3(2.0 * (x*z - y*w),        2.0 * (y*z + x*w),       1.0 - 2.0 * (x*x + y*y))
-    );
 }

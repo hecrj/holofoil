@@ -147,7 +147,7 @@ impl Pipeline {
                         // Size
                         1 => Float32x2,
                         // Rotation
-                        2 => Float32x3,
+                        2 => Float32x4,
                     ),
                 }],
             },
@@ -278,7 +278,7 @@ impl Card {
                     viewport.height as f32,
                 ],
                 size: [self.width as f32, self.height as f32],
-                rotation: [rotation.x.0, rotation.y.0, rotation.z.0],
+                rotation: [rotation.a.x, rotation.a.y, rotation.a.z, rotation.w],
             }]),
         );
     }
@@ -359,7 +359,7 @@ impl Mask {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Parameters {
     pub viewport: Viewport,
-    pub rotation: Rotation,
+    pub rotation: Quaternion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -370,20 +370,156 @@ pub struct Viewport {
     pub height: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Rotation {
-    pub x: Radians,
-    pub y: Radians,
-    pub z: Radians,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Quaternion {
+    pub a: Vector,
+    pub w: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
-pub struct Radians(pub f32);
+impl Quaternion {
+    pub fn from_radians(a: Vector, angle: f32) -> Self {
+        let angle = -angle / 2.0;
+        let sin = angle.sin();
+        let cos = angle.cos();
+
+        Self { a: a * sin, w: cos }
+    }
+
+    pub fn normalize(self) -> Self {
+        let d = (self.a.dot(self.a) + self.w * self.w).sqrt();
+
+        Self {
+            a: self.a / d,
+            w: self.w / d,
+        }
+    }
+
+    pub fn to_euler(self) -> Vector {
+        let pitch = (2.0 * (self.w * self.a.x - self.a.y * self.a.z))
+            .clamp(-1.0, 1.0)
+            .asin();
+
+        let yaw = (2.0 * (self.w * self.a.y + self.a.z * self.a.x))
+            .atan2(1.0 - 2.0 * (self.a.x * self.a.x + self.a.y * self.a.y));
+
+        let roll = (2.0 * (self.w * self.a.z + self.a.x * self.a.y))
+            .atan2(1.0 - 2.0 * (self.a.x * self.a.x + self.a.z * self.a.z));
+
+        let normalize = |angle: f32| {
+            if angle < 0.0 {
+                -angle
+            } else {
+                (2.0 * std::f32::consts::PI - angle).rem_euclid(2.0 * std::f32::consts::PI)
+            }
+        };
+
+        Vector {
+            x: normalize(pitch),
+            y: normalize(yaw),
+            z: normalize(roll),
+        }
+    }
+}
+
+impl Default for Quaternion {
+    fn default() -> Self {
+        Self {
+            a: Vector::default(),
+            w: 1.0,
+        }
+    }
+}
+
+impl std::ops::Mul for Quaternion {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let a = self.a * rhs.w + rhs.a * self.w + self.a.cross(rhs.a);
+        let w = self.w * rhs.w - self.a.dot(rhs.a);
+
+        Self { a, w }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Vector {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl Vector {
+    pub const X: Self = Self {
+        x: 1.0,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    pub const Y: Self = Self {
+        x: 0.0,
+        y: 1.0,
+        z: 0.0,
+    };
+
+    pub const Z: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+    };
+
+    pub fn cross(self, rhs: Self) -> Self {
+        Self {
+            x: self.y * rhs.z - self.z * rhs.y,
+            y: self.z * rhs.x - self.x * rhs.z,
+            z: self.x * rhs.y - self.y * rhs.x,
+        }
+    }
+
+    pub fn dot(self, rhs: Self) -> f32 {
+        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
+    }
+}
+
+impl std::ops::Add for Vector {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+            z: self.z + rhs.z,
+        }
+    }
+}
+
+impl std::ops::Mul<f32> for Vector {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Vector {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+
+impl std::ops::Div<f32> for Vector {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Vector {
+            x: self.x / rhs,
+            y: self.y / rhs,
+            z: self.z / rhs,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
 #[repr(C)]
 struct Instance {
     viewport: [f32; 4],
     size: [f32; 2],
-    rotation: [f32; 3],
+    rotation: [f32; 4],
 }
