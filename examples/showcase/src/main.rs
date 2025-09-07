@@ -4,15 +4,18 @@ use iced::mouse;
 use iced::theme;
 use iced::time::{Duration, Instant};
 use iced::wgpu;
-use iced::widget::shader;
+use iced::widget::{container, row, shader};
 use iced::window;
-use iced::{Color, Element, Fill, Rectangle, Size, Subscription, Task, Theme};
+use iced::{Color, Element, Fill, Font, Rectangle, Size, Subscription, Task, Theme};
 
 use std::sync::{Arc, Mutex};
 
 fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    tracing_subscriber::fmt::init();
 
     iced::application::timed(
         Showcase::new,
@@ -25,6 +28,7 @@ fn main() -> iced::Result {
         background_color: Color::BLACK,
         ..theme::Base::base(theme)
     })
+    .default_font(Font::MONOSPACE)
     .run()
 }
 
@@ -54,6 +58,10 @@ impl Showcase {
         )
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        window::frames().map(|_| Message::FrameRequested)
+    }
+
     fn update(&mut self, message: Message, now: Instant) {
         match message {
             Message::Booted => {
@@ -66,12 +74,13 @@ impl Showcase {
         }
     }
 
-    fn subscription(&self) -> Subscription<Message> {
-        window::frames().map(|_| Message::FrameRequested)
-    }
-
     fn view(&self) -> Element<'_, Message> {
-        shader(&self.viewer).width(Fill).height(Fill).into()
+        row![
+            shader(&self.viewer).width(Fill).height(Fill),
+            container("Controls").padding(10).width(200).height(Fill)
+        ]
+        .spacing(10)
+        .into()
     }
 }
 
@@ -216,69 +225,6 @@ impl Cache {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-struct Watcher {
-    _raw: notify::RecommendedWatcher,
-    pipelines: Mutex<std::sync::mpsc::Receiver<Pipeline>>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Watcher {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        use notify::Watcher as _;
-        use std::path::PathBuf;
-        use std::sync::mpsc;
-        use std::thread;
-
-        let (sender, receiver) = mpsc::channel();
-        let device = device.clone();
-        let queue = queue.clone();
-
-        let mut watcher =
-            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
-                let Ok(event) = event else {
-                    return;
-                };
-
-                if !event.paths.iter().any(|path| path.ends_with("shader.wgsl")) {
-                    return;
-                }
-
-                let (notify::EventKind::Modify(notify::event::ModifyKind::Data(_))
-                | notify::EventKind::Remove(notify::event::RemoveKind::File)) = event.kind
-                else {
-                    return;
-                };
-
-                let device = device.clone();
-                let queue = queue.clone();
-
-                if let Ok(pipeline) =
-                    thread::spawn(move || pipeline(&device, &queue, format)).join()
-                {
-                    let _ = sender.send(pipeline);
-                }
-            })
-            .unwrap();
-
-        watcher
-            .watch(
-                &PathBuf::from(format!("{}/../../src", env!("CARGO_MANIFEST_DIR"))),
-                notify::RecursiveMode::NonRecursive,
-            )
-            .unwrap();
-
-        Self {
-            _raw: watcher,
-            pipelines: Mutex::new(receiver),
-        }
-    }
-
-    fn latest(&mut self) -> Option<Pipeline> {
-        self.pipelines.lock().unwrap().try_iter().last()
-    }
-}
-
 fn umbreon() -> Structure {
     Structure {
         base: load_image(include_bytes!("../assets/sv8-5_en_161_std.png")),
@@ -332,5 +278,89 @@ fn load_mask(bytes: &[u8]) -> Mask {
     Mask {
         pixels: Bytes::copy_from_slice(bytes),
         size: metadata.width,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct Watcher {
+    _raw: notify_debouncer_full::Debouncer<
+        notify_debouncer_full::notify::RecommendedWatcher,
+        notify_debouncer_full::RecommendedCache,
+    >,
+    pipelines: Mutex<std::sync::mpsc::Receiver<Pipeline>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Watcher {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        use notify_debouncer_full::{DebounceEventResult, new_debouncer, notify};
+        use std::path::PathBuf;
+        use std::sync::mpsc;
+        use std::thread;
+
+        let (sender, receiver) = mpsc::channel();
+        let device = device.clone();
+        let queue = queue.clone();
+
+        let mut debouncer = new_debouncer(
+            Duration::from_millis(10),
+            None,
+            move |events: DebounceEventResult| {
+                let Ok(events) = events else {
+                    return;
+                };
+
+                let modified = events.iter().any(|event| {
+                    event.paths.iter().any(|path| path.ends_with("shader.wgsl"))
+                        && (event.kind.is_modify()
+                            || event.kind.is_remove()
+                            || event.kind.is_create())
+                });
+
+                if modified {
+                    let device = device.clone();
+                    let queue = queue.clone();
+
+                    log::info!("Recompiling shader...");
+
+                    if let Ok(pipeline) =
+                        thread::spawn(move || pipeline(&device, &queue, format)).join()
+                    {
+                        let _ = sender.send(pipeline);
+                    }
+                }
+            },
+        )
+        .unwrap();
+
+        debouncer
+            .watch(
+                &PathBuf::from(format!("{}/../../src", env!("CARGO_MANIFEST_DIR"))),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+
+        Self {
+            _raw: debouncer,
+            pipelines: Mutex::new(receiver),
+        }
+    }
+
+    fn latest(&mut self) -> Option<Pipeline> {
+        self.pipelines.lock().unwrap().try_iter().last()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        if let Ok(watcher) =
+            notify_debouncer_full::new_debouncer(Duration::from_millis(10), None, |_| {})
+        {
+            self._raw = watcher;
+        }
+
+        // This avoids a SIGSEGV because the notifier captures `Device`
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
