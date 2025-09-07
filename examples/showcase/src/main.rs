@@ -34,6 +34,7 @@ fn main() -> iced::Result {
         background_color: Color::BLACK,
         ..theme::Base::base(theme)
     })
+    .font(include_bytes!("../fonts/RobotoMono-Regular.ttf"))
     .default_font(Font::MONOSPACE)
     .run()
 }
