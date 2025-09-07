@@ -23,7 +23,7 @@ fn main() -> iced::Result {
     #[cfg(not(target_arch = "wasm32"))]
     tracing_subscriber::fmt::init();
 
-    iced::application::timed(
+    let application = iced::application::timed(
         Showcase::new,
         Showcase::update,
         Showcase::subscription,
@@ -34,9 +34,23 @@ fn main() -> iced::Result {
         background_color: Color::BLACK,
         ..theme::Base::base(theme)
     })
-    .font(include_bytes!("../fonts/RobotoMono-Regular.ttf"))
-    .default_font(Font::MONOSPACE)
-    .run()
+    .default_font(Font::MONOSPACE);
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        application
+            .font(include_bytes!("../fonts/RobotoMono-Regular.ttf"))
+            .default_font(Font {
+                family: iced::font::Family::Name("Roboto Mono"),
+                ..Default::default()
+            })
+            .run()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        application.run()
+    }
 }
 
 #[derive(Debug)]
