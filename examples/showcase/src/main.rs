@@ -1,13 +1,19 @@
-use holofoil::{Bytes, Card, Layer, Mask, Pipeline, Structure};
+use holofoil::{
+    Bytes, Card, Layer, Mask, Parameters, Pipeline, Radians, Rotation, Structure, Viewport,
+};
 
 use iced::mouse;
 use iced::theme;
 use iced::time::{Duration, Instant};
 use iced::wgpu;
-use iced::widget::{container, row, shader};
+use iced::widget::{
+    bottom_right, column, container, horizontal_space, row, shader, stack, text, toggler,
+};
 use iced::window;
-use iced::{Color, Element, Fill, Font, Rectangle, Size, Subscription, Task, Theme};
+use iced::{Center, Color, Element, Fill, Font, Rectangle, Subscription, Task, Theme};
+use iced_palace::widget::labeled_slider;
 
+use std::f32::consts::FRAC_PI_4;
 use std::sync::{Arc, Mutex};
 
 fn main() -> iced::Result {
@@ -35,12 +41,21 @@ fn main() -> iced::Result {
 #[derive(Debug)]
 struct Showcase {
     viewer: Viewer,
+    mode: Mode,
 }
 
 #[derive(Debug)]
+enum Mode {
+    Idle,
+    AutoRotate { last_tick: Instant },
+}
+
+#[derive(Debug, Clone)]
 enum Message {
     Booted,
     FrameRequested,
+    RotationChanged(Rotation),
+    ToggleAutoRotate(bool),
 }
 
 impl Showcase {
@@ -50,11 +65,11 @@ impl Showcase {
                 viewer: Viewer {
                     card: Arc::new(umbreon()),
                     cache: Arc::new(Mutex::new(Cache::new())),
-                    started_at: Instant::now(),
-                    now: Instant::now(),
+                    rotation: Rotation::default(),
                 },
+                mode: Mode::Idle,
             },
-            Task::done(Message::Booted), // TODO: Provide `Instant` to `new`
+            Task::done(Message::Booted),
         )
     }
 
@@ -65,19 +80,91 @@ impl Showcase {
     fn update(&mut self, message: Message, now: Instant) {
         match message {
             Message::Booted => {
-                self.viewer.started_at = now;
-                self.viewer.now = now;
+                self.mode = Mode::AutoRotate { last_tick: now };
             }
             Message::FrameRequested => {
-                self.viewer.now = now;
+                if let Mode::AutoRotate { last_tick } = &mut self.mode {
+                    const ROTATION_SPEED: f32 = FRAC_PI_4;
+
+                    self.viewer.rotation.y.0 +=
+                        ROTATION_SPEED * now.duration_since(*last_tick).as_secs_f32();
+
+                    *last_tick = now;
+                }
+            }
+            Message::RotationChanged(rotation) => {
+                self.viewer.rotation = rotation;
+                self.mode = Mode::Idle;
+            }
+            Message::ToggleAutoRotate(auto_rotate) => {
+                self.mode = if auto_rotate {
+                    Mode::AutoRotate { last_tick: now }
+                } else {
+                    Mode::Idle
+                };
             }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
-        row![
+        stack![
             shader(&self.viewer).width(Fill).height(Fill),
-            container("Controls").padding(10).width(200).height(Fill)
+            bottom_right(
+                container(self.controls())
+                    .width(180)
+                    .padding(10)
+                    .style(container::bordered_box)
+            )
+            .padding(10)
+        ]
+        .into()
+    }
+
+    fn controls(&self) -> Element<'_, Message> {
+        let rotation_slider =
+            |label, get: fn(Rotation) -> Radians, set: fn(Rotation, Radians) -> Rotation| {
+                labeled_slider(
+                    label,
+                    (0.0..=359.99, 0.1),
+                    get(self.viewer.rotation).0.to_degrees() % 360.0,
+                    move |angle| {
+                        Message::RotationChanged(set(
+                            self.viewer.rotation,
+                            Radians(angle.to_radians()),
+                        ))
+                    },
+                    |angle| format!("{angle:.2}°"),
+                )
+            };
+
+        column![
+            row![
+                text("Rotation").size(14),
+                horizontal_space(),
+                toggler(matches!(self.mode, Mode::AutoRotate { .. }))
+                    .text_size(14)
+                    .spacing(5)
+                    .on_toggle(Message::ToggleAutoRotate)
+            ]
+            .align_y(Center),
+            column![
+                rotation_slider(
+                    "X",
+                    |rotation| rotation.x,
+                    |rotation, x| Rotation { x, ..rotation }
+                ),
+                rotation_slider(
+                    "Y",
+                    |rotation| rotation.y,
+                    |rotation, y| Rotation { y, ..rotation }
+                ),
+                rotation_slider(
+                    "Z",
+                    |rotation| rotation.z,
+                    |rotation, z| Rotation { z, ..rotation }
+                )
+            ]
+            .spacing(5),
         ]
         .spacing(10)
         .into()
@@ -88,8 +175,7 @@ impl Showcase {
 struct Viewer {
     card: Arc<Structure>,
     cache: Arc<Mutex<Cache>>,
-    started_at: Instant,
-    now: Instant,
+    rotation: Rotation,
 }
 
 impl shader::Program<Message> for Viewer {
@@ -105,7 +191,7 @@ impl shader::Program<Message> for Viewer {
         Holofoil {
             card: self.card.clone(),
             cache: self.cache.clone(),
-            delta: self.now.duration_since(self.started_at),
+            rotation: self.rotation,
         }
     }
 }
@@ -114,7 +200,7 @@ impl shader::Program<Message> for Viewer {
 struct Holofoil {
     card: Arc<Structure>,
     cache: Arc<Mutex<Cache>>,
-    delta: Duration,
+    rotation: Rotation,
 }
 
 struct Renderer {
@@ -163,46 +249,33 @@ impl shader::Primitive for Holofoil {
             .take()
             .unwrap_or_else(|| renderer.pipeline.upload(device, queue, &self.card));
 
-        const ROTATION_SPEED: f32 = std::f32::consts::PI / 4.0;
+        let Some(bounds) = (*bounds * viewport.scale_factor()).snap() else {
+            return;
+        };
 
-        card.prepare(queue, 0.0, 0.0, ROTATION_SPEED * self.delta.as_secs_f32());
+        card.prepare(
+            queue,
+            Parameters {
+                viewport: Viewport {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height,
+                },
+                rotation: self.rotation,
+            },
+        );
         cache.card = Some(card);
-
-        if let Some(bounds) = (*bounds * viewport.scale_factor()).snap() {
-            cache.resolution = Size::new(bounds.width, bounds.height);
-            cache.queue = Some(queue.clone());
-        }
     }
 
-    fn draw(
-        &self,
-        renderer: &Renderer,
-        render_pass: &mut wgpu::RenderPass<'_>,
-        clip_bounds: &Rectangle<u32>,
-    ) -> bool {
+    fn draw(&self, renderer: &Renderer, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
         let cache = self.cache.lock().unwrap();
 
         let Some(card) = &cache.card else {
             return true;
         };
 
-        let Some(queue) = &cache.queue else {
-            return true;
-        };
-
-        render_pass.set_scissor_rect(
-            clip_bounds.x,
-            clip_bounds.y,
-            clip_bounds.width,
-            clip_bounds.height,
-        );
-
-        renderer.pipeline.render(
-            queue,
-            render_pass,
-            (cache.resolution.width, cache.resolution.height),
-            card,
-        );
+        renderer.pipeline.render(render_pass, card);
 
         true
     }
@@ -211,17 +284,11 @@ impl shader::Primitive for Holofoil {
 #[derive(Debug)]
 struct Cache {
     card: Option<Card>,
-    resolution: Size<u32>,
-    queue: Option<wgpu::Queue>, // No one can stop me
 }
 
 impl Cache {
     fn new() -> Self {
-        Self {
-            card: None,
-            resolution: Size::new(0, 0),
-            queue: None,
-        }
+        Self { card: None }
     }
 }
 

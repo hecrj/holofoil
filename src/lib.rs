@@ -6,7 +6,6 @@ use std::mem;
 #[derive(Debug)]
 pub struct Pipeline {
     raw: wgpu::RenderPipeline,
-    uniforms: wgpu::Buffer,
     uniforms_binding: wgpu::BindGroup,
     textures_layout: wgpu::BindGroupLayout,
     back_texture: wgpu::Texture,
@@ -40,13 +39,6 @@ impl Pipeline {
         format: wgpu::TextureFormat,
         back_texture: Layer,
     ) -> Self {
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("holofoil uniforms buffer"),
-            size: mem::size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("holofoil sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -61,22 +53,12 @@ impl Pipeline {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -94,18 +76,10 @@ impl Pipeline {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniforms,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: wgpu::BindingResource::TextureView(
                         &back_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
@@ -168,12 +142,12 @@ impl Pipeline {
                     array_stride: mem::size_of::<Instance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &wgpu::vertex_attr_array!(
-                        // Position
-                        0 => Float32x2,
+                        // Viewport
+                        0 => Float32x4,
                         // Size
-                        1 => Uint32x2,
+                        1 => Float32x2,
                         // Rotation
-                        2 => Float32,
+                        2 => Float32x3,
                     ),
                 }],
             },
@@ -196,7 +170,6 @@ impl Pipeline {
 
         Self {
             raw: pipeline,
-            uniforms,
             uniforms_binding,
             textures_layout,
             back_texture,
@@ -270,22 +243,7 @@ impl Pipeline {
         }
     }
 
-    pub fn render(
-        &self,
-        queue: &wgpu::Queue,
-        render_pass: &mut wgpu::RenderPass<'_>,
-        resolution: (u32, u32),
-        card: &Card,
-    ) {
-        queue.write_buffer(
-            &self.uniforms,
-            0,
-            bytemuck::cast_slice(&[Uniforms {
-                resolution: [resolution.0, resolution.1],
-                _padding: [0, 0],
-            }]),
-        );
-
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'_>, card: &Card) {
         render_pass.set_pipeline(&self.raw);
         render_pass.set_bind_group(0, &self.uniforms_binding, &[]);
         render_pass.set_bind_group(1, &card.binding, &[]);
@@ -306,14 +264,21 @@ pub struct Card {
 }
 
 impl Card {
-    pub fn prepare(&mut self, queue: &wgpu::Queue, x: f32, y: f32, rotation: f32) {
+    pub fn prepare(&mut self, queue: &wgpu::Queue, parameters: Parameters) {
+        let Parameters { viewport, rotation } = parameters;
+
         queue.write_buffer(
             &self.instance,
             0,
             bytemuck::cast_slice(&[Instance {
-                position: [x, y],
-                size: [self.width, self.height],
-                rotation,
+                viewport: [
+                    viewport.x as f32,
+                    viewport.y as f32,
+                    viewport.width as f32,
+                    viewport.height as f32,
+                ],
+                size: [self.width as f32, self.height as f32],
+                rotation: [rotation.x.0, rotation.y.0, rotation.z.0],
             }]),
         );
     }
@@ -391,17 +356,34 @@ impl Mask {
     }
 }
 
-#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
-#[repr(C)]
-struct Instance {
-    position: [f32; 2],
-    size: [u32; 2],
-    rotation: f32,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Parameters {
+    pub viewport: Viewport,
+    pub rotation: Rotation,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Viewport {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rotation {
+    pub x: Radians,
+    pub y: Radians,
+    pub z: Radians,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+pub struct Radians(pub f32);
 
 #[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
 #[repr(C)]
-struct Uniforms {
-    resolution: [u32; 2],
-    _padding: [u32; 2],
+struct Instance {
+    viewport: [f32; 4],
+    size: [f32; 2],
+    rotation: [f32; 3],
 }

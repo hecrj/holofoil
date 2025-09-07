@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 holofoil.workspace = true
+iced_palace.workspace = true
 log.workspace = true
 png.workspace = true
 

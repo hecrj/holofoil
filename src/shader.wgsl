@@ -1,51 +1,34 @@
-struct Uniforms {
-    resolution: vec2<u32>,
-    _padding: vec2<u32>,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var u_sampler: sampler;
-@group(0) @binding(2) var u_back: texture_2d<f32>;
+@group(0) @binding(0) var u_sampler: sampler;
+@group(0) @binding(1) var u_back: texture_2d<f32>;
 
 @group(1) @binding(0) var u_base: texture_2d<f32>;
 @group(1) @binding(1) var u_foil: texture_2d<f32>;
 @group(1) @binding(2) var u_etch: texture_2d<f32>;
 
 struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) size: vec2<u32>,
-    @location(2) rotation: f32,
+    @location(0) viewport: vec4<f32>,
+    @location(1) size: vec2<f32>,
+    @location(2) rotation: vec3<f32>,
     @builtin(vertex_index) index: u32,
 }
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) center: vec2<f32>,
+    @location(0) viewport: vec4<f32>,
     @location(1) size: vec2<f32>,
-    @location(2) rotation: f32,
+    @location(2) rotation: vec3<f32>,
 }
-
-const fov: f32 = 60.0;
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let max_dimension = f32(max(input.size.x, input.size.y));
-    let max_distance = max_dimension * 1.2;
-    let camera = vec3(0.0, 0.0, -max_distance);
-    let distance_to_camera = length(vec3(input.position, 0.0) - camera);
+    let corner = vec2<f32>(corner_position(input.index));
 
-    let half_fov = fov / 2.0;
-    let scale = distance_to_camera * tan(half_fov); 
-
-    let corner = corner_position(input.index);
-    let position = scale * vec2<f32>(corner) + (input.position + vec2<f32>(uniforms.resolution) / 2.0) - scale / 2.0;
-
-    out.center = vec2<f32>(input.position);
-    out.size = vec2<f32>(input.size);
+    out.position = vec4(2.0 * corner - 1.0, 0.0, 1.0);
+    out.viewport = input.viewport;
+    out.size = input.size;
     out.rotation = input.rotation;
-    out.position = vec4<f32>(2.0 * position / vec2<f32>(uniforms.resolution) - 1.0, 0.0, 1.0) ;
 
     return out;
 }
@@ -59,20 +42,15 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let card_size = input.size / (2.0 * max_dimension);
 
     let camera = vec3(0.0, 0.0, -max_distance);
-    let aspect = f32(uniforms.resolution.x) / f32(uniforms.resolution.y);
-
     let light = vec3(3.0, 10.0, -20.0);
     let light_power = 700.0;
 
-    // let cos_rot = cos(radians(17));
-    // let sin_rot = sin(radians(17));
-    let cos_rot = cos(input.rotation);
-    let sin_rot = sin(input.rotation);
-
-    let rotation = mat3x3<f32>(
-        vec3(cos_rot, 0.0, sin_rot),
-        vec3(0.0, 1.0, 0.0),
-        vec3(-sin_rot, 0.0, cos_rot),
+    let rotation = q_mul(
+        quaternion(vec3(0, 1, 0), input.rotation.y),
+        q_mul(
+            quaternion(vec3(1, 0, 0), input.rotation.x),
+            quaternion(vec3(0, 0, 1), input.rotation.z),
+        ),
     );
 
     var color: vec4<f32>;
@@ -83,16 +61,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let ray_origin = camera;
 
         let pixel = vec2<f32>(
-            2.0 * (input.position.x + o.x) - f32(uniforms.resolution.x),
-            -2.0 * (input.position.y + o.y) + f32(uniforms.resolution.y),
-        ) / f32(uniforms.resolution.y);
+            2.0 * (input.position.x - input.viewport.x + o.x) - input.viewport.z,
+            -2.0 * (input.position.y - input.viewport.y + o.y) + input.viewport.w,
+        ) / input.viewport.w;
 
-        let ray_direction = normalize(vec3(pixel.xy, 3.0));
+        let ray_direction = normalize(vec3(pixel, 3.0));
 
         var t = -max_distance;
+        var hitDetected = false;
 
         for (var i = 0; i < 64; i++) {
-            let p = transpose(rotation) * (ray_origin + ray_direction * t);
+            let p = rotate_i(rotation, ray_origin + ray_direction * t);
             let d = sd_card(p, card_size);
 
             if d < 0.00001 || t > 2.0 * max_distance {
@@ -103,11 +82,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         if t <= 2.0 * max_distance {
-            let hit = transpose(rotation) * (ray_origin + ray_direction * t);
-            let hit_rotated = rotation * hit;
+            let hit_rotated = ray_origin + ray_direction * t;
+            let hit = rotate_i(rotation, hit_rotated);
             let normal = estimate_normal(hit, card_size);
             let normal_abs = abs(normal);
-            let N = rotation * normal;
+            let N = rotate(rotation, normal);
             let V = -ray_direction;
             let L = normalize(light - hit_rotated);
             let light_strength = light_power / pow(distance(light, hit_rotated), 2.0);
@@ -182,7 +161,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 }
             } else {
                 // Side edge
-                sample = vec4(0.5, 0.5, 0.5, abs((rotation * normal).z));
+                sample = vec4(0.5, 0.5, 0.5, abs(N.z));
             }
 
 
@@ -246,4 +225,42 @@ fn hash(p: vec2<f32>) -> f32 {
 
 fn luminance(color: vec3<f32>) -> f32 {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
+fn quaternion(a: vec3<f32>, rotation: f32) -> vec4<f32> {
+    return vec4(a * sin(-rotation / 2.0), cos(-rotation / 2.0));
+}
+
+fn q_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+    let v1 = a.xyz;
+    let v2 = b.xyz;
+    let w1 = a.w;
+    let w2 = b.w;
+    let xyz = w1 * v2 + w2 * v1 + cross(v1, v2);
+    let w = w1 * w2 - dot(v1, v2);
+
+    return vec4(xyz, w);
+}
+
+fn rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    let u = q.xyz;
+    let s = q.w;
+    return v + 2.0 * cross(u, cross(u, v) + s * v);
+}
+
+fn rotate_i(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    return rotate(vec4(-q.xyz, q.w), v);
+}
+
+fn q_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
+    let x = q.x;
+    let y = q.y;
+    let z = q.z;
+    let w = q.w;
+
+    return mat3x3<f32>(
+        vec3(1.0 - 2.0 * (y*y + z*z),  2.0 * (x*y - z*w),       2.0 * (x*z + y*w)),
+        vec3(2.0 * (x*y + z*w),        1.0 - 2.0 * (x*x + z*z), 2.0 * (y*z - x*w)),
+        vec3(2.0 * (x*z - y*w),        2.0 * (y*z + x*w),       1.0 - 2.0 * (x*x + y*y))
+    );
 }
