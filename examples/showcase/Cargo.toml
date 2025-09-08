@@ -11,7 +11,7 @@ log.workspace = true
 png.workspace = true
 
 iced.workspace = true
-iced.features = ["wgpu", "thread-pool"]
+iced.features = ["wgpu", "thread-pool", "crisp"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 notify-debouncer-full.workspace = true
@@ -21,4 +21,4 @@ tracing-subscriber.workspace = true
 console_error_panic_hook.workspace = true
 
 iced.workspace = true
-iced.features = ["webgl"]
+iced.features = ["webgl", "web-colors"]

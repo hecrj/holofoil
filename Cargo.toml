@@ -34,3 +34,7 @@ iced = { git = "https://github.com/iced-rs/iced.git" }
 iced_core = { git = "https://github.com/iced-rs/iced.git" }
 iced_widget = { git = "https://github.com/iced-rs/iced.git" }
 iced_palace = { git = "https://github.com/hecrj/iced_palace.git" }
+
+# iced.path = "../iced"
+# iced_core.path = "../iced/core"
+# iced_widget.path = "../iced/widget"

@@ -172,7 +172,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     color /= f32(n_samples * n_samples);
 
-    return color;
+    return encodeColor(color);
 }
 
 // Compute the normalized quad coordinates based on the vertex index.

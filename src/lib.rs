@@ -12,22 +12,43 @@ pub struct Pipeline {
 }
 
 macro_rules! load_wgsl {
-    ($path:literal) => {
-        if cfg!(all(not(target_arch = "wasm32"), debug_assertions)) {
-            $crate::wgpu::ShaderModuleDescriptor {
-                label: Some($path),
-                source: $crate::wgpu::ShaderSource::Wgsl(
-                    ::std::fs::read_to_string(format!(
+    ($path:literal, $format:expr) => {
+        $crate::wgpu::ShaderModuleDescriptor {
+            label: Some($path),
+            source: $crate::wgpu::ShaderSource::Wgsl(
+                if cfg!(all(not(target_arch = "wasm32"), debug_assertions)) {
+                    let mut shader = ::std::fs::read_to_string(format!(
                         "{}/src/{}",
                         env!("CARGO_MANIFEST_DIR"),
                         $path
                     ))
-                    .unwrap()
-                    .into(),
-                ),
-            }
-        } else {
-            $crate::wgpu::include_wgsl!($path)
+                    .unwrap();
+
+                    shader.push_str("\n");
+
+                    shader.push_str(if $format.is_srgb() {
+                        include_str!("./shader/linear_rgb.wgsl")
+                    } else {
+                        include_str!("./shader/srgb.wgsl")
+                    });
+
+                    shader.into()
+                } else if $format.is_srgb() {
+                    concat!(
+                        include_str!($path),
+                        "\n",
+                        include_str!("./shader/linear_rgb.wgsl")
+                    )
+                    .into()
+                } else {
+                    concat!(
+                        include_str!($path),
+                        "\n",
+                        include_str!("./shader/srgb.wgsl")
+                    )
+                    .into()
+                },
+            ),
         }
     };
 }
@@ -129,7 +150,7 @@ impl Pipeline {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(load_wgsl!("./shader.wgsl"));
+        let shader = device.create_shader_module(load_wgsl!("./shader.wgsl", format));
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("holofoil pipeline"),
