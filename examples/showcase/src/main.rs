@@ -90,7 +90,10 @@ impl Showcase {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        window::frames().map(|_| Message::FrameRequested)
+        match self.mode {
+            Mode::Idle => Subscription::none(),
+            Mode::AutoRotate { .. } => window::frames().map(|_| Message::FrameRequested),
+        }
     }
 
     fn update(&mut self, message: Message, now: Instant) {
