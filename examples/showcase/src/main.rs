@@ -7,13 +7,15 @@ use iced::theme;
 use iced::time::{Duration, Instant};
 use iced::wgpu;
 use iced::widget::{
-    bottom_right, column, container, horizontal_space, row, shader, stack, text, toggler,
+    bottom_right, column, container, horizontal_space, opaque, row, shader, stack, text, toggler,
 };
 use iced::window;
-use iced::{Center, Color, Element, Fill, Font, Rectangle, Subscription, Task, Theme};
+use iced::{
+    Center, Color, Element, Event, Fill, Font, Point, Rectangle, Subscription, Task, Theme,
+};
 use iced_palace::widget::labeled_slider;
 
-use std::f32::consts::FRAC_PI_4;
+use std::f32::consts::{FRAC_PI_4, PI};
 use std::sync::{Arc, Mutex};
 
 fn main() -> iced::Result {
@@ -69,7 +71,9 @@ enum Mode {
 enum Message {
     Booted,
     FrameRequested,
-    RotationChanged(Vector),
+    Grabbed,
+    RotationChanged(Quaternion),
+    RotationEulerChanged(Vector),
     ToggleAutoRotate(bool),
 }
 
@@ -116,7 +120,14 @@ impl Showcase {
                     *last_tick = now;
                 }
             }
+            Message::Grabbed => {
+                self.mode = Mode::Idle;
+            }
             Message::RotationChanged(rotation) => {
+                self.viewer.rotation = rotation;
+                self.viewer.euler = rotation.to_euler();
+            }
+            Message::RotationEulerChanged(rotation) => {
                 self.viewer.rotation = Quaternion::from_radians(Vector::Y, rotation.y)
                     * Quaternion::from_radians(Vector::X, rotation.x)
                     * Quaternion::from_radians(Vector::Z, rotation.z);
@@ -137,12 +148,12 @@ impl Showcase {
     fn view(&self) -> Element<'_, Message> {
         stack![
             shader(&self.viewer).width(Fill).height(Fill),
-            bottom_right(
+            bottom_right(opaque(
                 container(self.controls())
                     .width(180)
                     .padding(10)
                     .style(container::bordered_box)
-            )
+            ))
             .padding(10)
         ]
         .into()
@@ -154,7 +165,9 @@ impl Showcase {
                 label,
                 (0.0..=359.99, 0.1),
                 get(self.viewer.euler).to_degrees().rem_euclid(360.0),
-                move |angle| Message::RotationChanged(set(self.viewer.euler, angle.to_radians())),
+                move |angle| {
+                    Message::RotationEulerChanged(set(self.viewer.euler, angle.to_radians()))
+                },
                 |angle| format!("{angle:.2}°"),
             )
         };
@@ -201,9 +214,62 @@ struct Viewer {
     euler: Vector,
 }
 
+#[derive(Debug, Default)]
+enum Interaction {
+    #[default]
+    Idle,
+    Dragging {
+        origin: Quaternion,
+        start: Point,
+    },
+}
+
 impl shader::Program<Message> for Viewer {
-    type State = ();
+    type State = Interaction;
     type Primitive = Holofoil;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<shader::Action<Message>> {
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let start = cursor.position_over(bounds)?;
+
+                *state = Interaction::Dragging {
+                    origin: self.rotation,
+                    start,
+                };
+
+                Some(shader::Action::publish(Message::Grabbed))
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                *state = Interaction::Idle;
+
+                None
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Interaction::Dragging { origin, start } = state else {
+                    return None;
+                };
+
+                let current = cursor.land().position()?;
+                let delta = current - *start;
+                let scale = bounds.width.min(bounds.height);
+
+                let rotation = Quaternion::from_radians(Vector::X, PI * delta.y / scale)
+                    * Quaternion::from_radians(Vector::Y, PI * delta.x / scale);
+
+                Some(shader::Action::publish(Message::RotationChanged(
+                    rotation * *origin,
+                )))
+            }
+            _ => None,
+        }
+    }
 
     fn draw(
         &self,
@@ -215,6 +281,24 @@ impl shader::Program<Message> for Viewer {
             card: self.card.clone(),
             cache: self.cache.clone(),
             rotation: self.rotation,
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        match state {
+            Interaction::Idle => {
+                if cursor.is_over(bounds) {
+                    mouse::Interaction::Grab
+                } else {
+                    mouse::Interaction::None
+                }
+            }
+            Interaction::Dragging { .. } => mouse::Interaction::Grabbing,
         }
     }
 }
