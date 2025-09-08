@@ -29,7 +29,7 @@ fn main() -> iced::Result {
         Showcase::subscription,
         Showcase::view,
     )
-    .theme(|_| Theme::CatppuccinMocha)
+    .theme(Theme::CatppuccinMocha)
     .style(|_, theme| theme::Style {
         background_color: Color::BLACK,
         ..theme::Base::base(theme)
