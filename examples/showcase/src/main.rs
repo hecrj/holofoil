@@ -12,6 +12,7 @@ use iced::widget::{
 use iced::window;
 use iced::{
     Center, Color, Element, Event, Fill, Font, Point, Rectangle, Subscription, Task, Theme,
+    Vector as Vector2,
 };
 use iced_palace::widget::labeled_slider;
 
@@ -64,7 +65,16 @@ struct Showcase {
 #[derive(Debug)]
 enum Mode {
     Idle,
-    AutoRotate { last_tick: Instant },
+    Spinning { spin: Vector2, last_tick: Instant },
+}
+
+impl Mode {
+    fn spin(now: Instant) -> Self {
+        Self::Spinning {
+            spin: Vector2::new(FRAC_PI_4, 0.0),
+            last_tick: now,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +85,7 @@ enum Message {
     RotationChanged(Quaternion),
     RotationEulerChanged(Vector),
     ToggleAutoRotate(bool),
+    Spin(Vector2),
 }
 
 impl Showcase {
@@ -96,30 +107,27 @@ impl Showcase {
     fn subscription(&self) -> Subscription<Message> {
         match self.mode {
             Mode::Idle => Subscription::none(),
-            Mode::AutoRotate { .. } => window::frames().map(|_| Message::FrameRequested),
+            Mode::Spinning { .. } => window::frames().map(|_| Message::FrameRequested),
         }
     }
 
     fn update(&mut self, message: Message, now: Instant) {
         match message {
-            Message::Booted => {
-                self.mode = Mode::AutoRotate { last_tick: now };
-            }
-            Message::FrameRequested => {
-                if let Mode::AutoRotate { last_tick } = &mut self.mode {
-                    const ROTATION_SPEED: f32 = FRAC_PI_4;
+            Message::Booted => self.mode = Mode::spin(now),
+            Message::FrameRequested => match &mut self.mode {
+                Mode::Spinning { spin, last_tick } => {
+                    let delta = *spin * now.duration_since(*last_tick).as_secs_f32();
 
-                    let delta = ROTATION_SPEED * now.duration_since(*last_tick).as_secs_f32();
+                    let spin = Quaternion::from_radians(Vector::X, delta.y)
+                        * Quaternion::from_radians(Vector::Y, delta.x);
 
-                    self.viewer.rotation = (Quaternion::from_radians(Vector::Y, delta)
-                        * self.viewer.rotation)
-                        .normalize();
-
-                    self.viewer.euler.y += delta;
+                    self.viewer.rotation = (spin * self.viewer.rotation).normalize();
+                    self.viewer.euler = self.viewer.rotation.to_euler();
 
                     *last_tick = now;
                 }
-            }
+                Mode::Idle => {}
+            },
             Message::Grabbed => {
                 self.mode = Mode::Idle;
             }
@@ -137,9 +145,15 @@ impl Showcase {
             }
             Message::ToggleAutoRotate(auto_rotate) => {
                 self.mode = if auto_rotate {
-                    Mode::AutoRotate { last_tick: now }
+                    Mode::spin(now)
                 } else {
                     Mode::Idle
+                };
+            }
+            Message::Spin(spin) => {
+                self.mode = Mode::Spinning {
+                    spin,
+                    last_tick: now,
                 };
             }
         }
@@ -176,7 +190,7 @@ impl Showcase {
             row![
                 text("Rotation").size(14),
                 horizontal_space(),
-                toggler(matches!(self.mode, Mode::AutoRotate { .. }))
+                toggler(matches!(self.mode, Mode::Spinning { .. }))
                     .text_size(14)
                     .spacing(5)
                     .on_toggle(Message::ToggleAutoRotate)
@@ -221,6 +235,9 @@ enum Interaction {
     Dragging {
         origin: Quaternion,
         start: Point,
+        last: Point,
+        now: Instant,
+        speed: Vector2,
     },
 }
 
@@ -242,17 +259,39 @@ impl shader::Program<Message> for Viewer {
                 *state = Interaction::Dragging {
                     origin: self.rotation,
                     start,
+                    last: start,
+                    now: Instant::now(),
+                    speed: Vector2::ZERO,
                 };
 
                 Some(shader::Action::publish(Message::Grabbed))
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                *state = Interaction::Idle;
+                let interaction = std::mem::take(state);
 
-                None
+                let Interaction::Dragging { speed, now, .. } = interaction else {
+                    return None;
+                };
+
+                let factor = (Point::ORIGIN + speed).distance(Point::ORIGIN);
+
+                if factor < 100.0 || now.elapsed().as_millis() > 200 {
+                    return None;
+                }
+
+                let scale = bounds.width.min(bounds.height);
+
+                Some(shader::Action::publish(Message::Spin(speed * (PI / scale))))
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let Interaction::Dragging { origin, start } = state else {
+                let Interaction::Dragging {
+                    origin,
+                    start,
+                    last,
+                    now,
+                    speed,
+                } = state
+                else {
                     return None;
                 };
 
@@ -262,6 +301,14 @@ impl shader::Program<Message> for Viewer {
 
                 let rotation = Quaternion::from_radians(Vector::X, PI * delta.y / scale)
                     * Quaternion::from_radians(Vector::Y, PI * delta.x / scale);
+
+                let duration = now.elapsed();
+
+                if duration.as_millis() > 10 {
+                    *now = Instant::now();
+                    *speed = (*speed + (current - *last) * (1.0 / duration.as_secs_f32())) * 0.5;
+                    *last = current;
+                }
 
                 Some(shader::Action::publish(Message::RotationChanged(
                     rotation * *origin,
