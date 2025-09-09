@@ -9,6 +9,7 @@
 struct Parameters {
     n_samples: u32,
     max_iterations: u32,
+    _padding: vec2<u32>,
 }
 
 struct VertexInput {

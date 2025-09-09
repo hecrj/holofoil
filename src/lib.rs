@@ -345,6 +345,7 @@ impl Default for Configuration {
 pub struct Parameters {
     n_samples: u32,
     max_iterations: u32,
+    _padding: [u32; 2],
 }
 
 impl From<Configuration> for Parameters {
@@ -352,6 +353,7 @@ impl From<Configuration> for Parameters {
         Self {
             n_samples: parameters.n_samples,
             max_iterations: parameters.max_iterations,
+            _padding: [0, 0],
         }
     }
 }
