@@ -1,12 +1,13 @@
 use holofoil::card;
-use holofoil::{Bytes, Card, Configuration, Pipeline, Quaternion, Vector};
+use holofoil::{Bytes, Card, Configuration, Light, Pipeline, Quaternion, Vector};
 
 use iced::mouse;
 use iced::theme;
 use iced::time::{Duration, Instant};
 use iced::wgpu;
 use iced::widget::{
-    bottom_right, column, container, horizontal_space, opaque, row, shader, stack, text, toggler,
+    bottom, bottom_right, column, container, horizontal_space, opaque, responsive, row, shader,
+    stack, text, toggler,
 };
 use iced::window;
 use iced::{
@@ -83,10 +84,11 @@ enum Message {
     Grabbed,
     RotationChanged(Quaternion),
     RotationEulerChanged(Vector),
-    ToggleAutoRotate(bool),
+    ToggleAutoSpin(bool),
     Spin(Vector2),
     SamplesChanged(u32),
     MaxIterationsChanged(u32),
+    LightChanged(Light),
 }
 
 impl Showcase {
@@ -145,12 +147,8 @@ impl Showcase {
                 self.viewer.euler = rotation;
                 self.mode = Mode::Idle;
             }
-            Message::ToggleAutoRotate(auto_rotate) => {
-                self.mode = if auto_rotate {
-                    Mode::spin(now)
-                } else {
-                    Mode::Idle
-                };
+            Message::ToggleAutoSpin(spin) => {
+                self.mode = if spin { Mode::spin(now) } else { Mode::Idle };
             }
             Message::Spin(spin) => {
                 self.mode = Mode::Spinning {
@@ -164,16 +162,27 @@ impl Showcase {
             Message::MaxIterationsChanged(max_iterations) => {
                 self.viewer.configuration.max_iterations = max_iterations;
             }
+            Message::LightChanged(light) => {
+                self.viewer.configuration.light = light;
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let controls = [self.quality(), self.rotation()];
+        responsive(|size| {
+            let viewer = shader(&self.viewer).width(Fill).height(Fill);
 
-        stack![
-            shader(&self.viewer).width(Fill).height(Fill),
-            bottom_right(opaque(column(controls).width(230).spacing(10).padding(10)))
-        ]
+            let controls = column![self.quality(), self.light(), self.rotation()]
+                .width(230)
+                .spacing(10)
+                .padding(10);
+
+            if size.width / size.height > 1.5 {
+                stack![viewer, bottom_right(opaque(controls))].into()
+            } else {
+                row![viewer, bottom(controls)].into()
+            }
+        })
         .into()
     }
 
@@ -181,6 +190,7 @@ impl Showcase {
         let Configuration {
             n_samples,
             max_iterations,
+            ..
         } = self.viewer.configuration;
 
         control(
@@ -205,6 +215,26 @@ impl Showcase {
         )
     }
 
+    fn light(&self) -> Element<'_, Message> {
+        let light = self.viewer.configuration.light;
+
+        control(
+            "Light",
+            column![
+                labeled_slider(
+                    "Power",
+                    (100.0..=2000.0, 0.01),
+                    light.power,
+                    move |power| Message::LightChanged(Light { power, ..light }),
+                    |power| format!("{power:.2}"),
+                ),
+                position_sliders(-30.0..=30.0, light.position)
+                    .map(move |position| Message::LightChanged(Light { position, ..light })),
+            ]
+            .spacing(5),
+        )
+    }
+
     fn rotation(&self) -> Element<'_, Message> {
         let rotation_slider = |label, get: fn(Vector) -> f32, set: fn(Vector, f32) -> Vector| {
             labeled_slider(
@@ -221,7 +251,7 @@ impl Showcase {
         control_with_toggle(
             "Rotation",
             matches!(self.mode, Mode::Spinning { .. }),
-            Message::ToggleAutoRotate,
+            Message::ToggleAutoSpin,
             column![
                 rotation_slider(
                     "X",
@@ -277,6 +307,29 @@ fn control_with_toggle<'a>(
     .width(Fill)
     .padding(10)
     .style(container::bordered_box)
+    .into()
+}
+
+fn position_sliders<'a>(
+    range: std::ops::RangeInclusive<f32>,
+    position: Vector,
+) -> Element<'a, Vector> {
+    let position_slider = |label, value: f32, set: fn(Vector, f32) -> Vector| {
+        labeled_slider(
+            label,
+            (range.clone(), 0.1),
+            value,
+            move |value| set(position, value),
+            |value| format!("{value:.2}°"),
+        )
+    };
+
+    column![
+        position_slider("X", position.x, |position, x| Vector { x, ..position }),
+        position_slider("Y", position.y, |position, y| Vector { y, ..position }),
+        position_slider("Z", position.z, |position, z| Vector { z, ..position }),
+    ]
+    .spacing(5)
     .into()
 }
 

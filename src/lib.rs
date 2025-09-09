@@ -329,15 +329,30 @@ impl Pipeline {
 pub struct Configuration {
     pub n_samples: u32,
     pub max_iterations: u32,
+    pub light: Light,
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
             n_samples: 2,
-            max_iterations: 64,
+            max_iterations: 128,
+            light: Light {
+                position: Vector {
+                    x: 3.0,
+                    y: 4.0,
+                    z: -20.0,
+                },
+                power: 600.0,
+            },
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Light {
+    pub position: Vector,
+    pub power: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Zeroable, bytemuck::Pod)]
@@ -346,13 +361,21 @@ pub struct Parameters {
     n_samples: u32,
     max_iterations: u32,
     _padding: [u32; 2],
+    light_position: [f32; 3],
+    light_power: f32,
 }
 
 impl From<Configuration> for Parameters {
-    fn from(parameters: Configuration) -> Self {
+    fn from(configuration: Configuration) -> Self {
         Self {
-            n_samples: parameters.n_samples,
-            max_iterations: parameters.max_iterations,
+            n_samples: configuration.n_samples,
+            max_iterations: configuration.max_iterations,
+            light_position: [
+                configuration.light.position.x,
+                configuration.light.position.y,
+                configuration.light.position.z,
+            ],
+            light_power: configuration.light.power,
             _padding: [0, 0],
         }
     }
