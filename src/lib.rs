@@ -1,6 +1,15 @@
 pub use bytes::Bytes;
 pub use wgpu;
 
+mod quaternion;
+mod vector;
+
+pub mod card;
+
+pub use card::Card;
+pub use quaternion::Quaternion;
+pub use vector::Vector;
+
 use std::mem;
 
 #[derive(Debug)]
@@ -8,7 +17,8 @@ pub struct Pipeline {
     raw: wgpu::RenderPipeline,
     uniforms_binding: wgpu::BindGroup,
     textures_layout: wgpu::BindGroupLayout,
-    back_texture: wgpu::Texture,
+    configuration: (wgpu::Buffer, Configuration),
+    _back_texture: wgpu::Texture,
 }
 
 macro_rules! load_wgsl {
@@ -58,7 +68,7 @@ impl Pipeline {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        back_texture: Layer,
+        back_texture: card::Image,
     ) -> Self {
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("holofoil sampler"),
@@ -66,6 +76,19 @@ impl Pipeline {
             min_filter: wgpu::FilterMode::Linear,
             ..wgpu::SamplerDescriptor::default()
         });
+
+        let configuration = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("holofoil parameters"),
+            size: mem::size_of::<Parameters>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        queue.write_buffer(
+            &configuration,
+            0,
+            bytemuck::cast_slice(&[Parameters::from(Configuration::default())]),
+        );
 
         let back_texture = back_texture.upload(device, queue);
 
@@ -88,6 +111,16 @@ impl Pipeline {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -104,6 +137,10 @@ impl Pipeline {
                     resource: wgpu::BindingResource::TextureView(
                         &back_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: configuration.as_entire_binding(),
                 },
             ],
         });
@@ -160,7 +197,7 @@ impl Pipeline {
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<Instance>() as u64,
+                    array_stride: mem::size_of::<card::Instance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &wgpu::vertex_attr_array!(
                         // Viewport
@@ -193,19 +230,34 @@ impl Pipeline {
             raw: pipeline,
             uniforms_binding,
             textures_layout,
-            back_texture,
+            configuration: (configuration, Configuration::default()),
+            _back_texture: back_texture,
         }
+    }
+
+    pub fn configure(&self, queue: &wgpu::Queue, configuration: Configuration) {
+        let (buffer, last) = &self.configuration;
+
+        if *last == configuration {
+            return;
+        }
+
+        queue.write_buffer(
+            buffer,
+            0,
+            bytemuck::cast_slice(&[Parameters::from(configuration)]),
+        );
     }
 
     pub fn upload(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        definition: &Structure,
+        definition: &card::Structure,
     ) -> Card {
         let instance = device.create_buffer(&wgpu::wgt::BufferDescriptor {
             label: Some("holofoil instance buffer"),
-            size: mem::size_of::<Instance>() as u64,
+            size: mem::size_of::<card::Instance>() as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -255,9 +307,9 @@ impl Pipeline {
 
         Card {
             instance,
-            base,
-            foil,
-            etching,
+            _base: base,
+            _foil: foil,
+            _etching: etching,
             binding,
             width: definition.width,
             height: definition.base.size,
@@ -273,274 +325,33 @@ impl Pipeline {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Card {
-    width: u32,
-    height: u32,
-    instance: wgpu::Buffer,
-    base: wgpu::Texture,
-    foil: Option<wgpu::Texture>,
-    etching: Option<wgpu::Texture>,
-    binding: wgpu::BindGroup,
-}
-
-impl Card {
-    pub fn prepare(&mut self, queue: &wgpu::Queue, parameters: Parameters) {
-        let Parameters { viewport, rotation } = parameters;
-
-        queue.write_buffer(
-            &self.instance,
-            0,
-            bytemuck::cast_slice(&[Instance {
-                viewport: [
-                    viewport.x as f32,
-                    viewport.y as f32,
-                    viewport.width as f32,
-                    viewport.height as f32,
-                ],
-                size: [self.width as f32, self.height as f32],
-                rotation: [rotation.a.x, rotation.a.y, rotation.a.z, rotation.w],
-            }]),
-        );
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Structure {
-    pub base: Layer,
-    pub foil: Option<Mask>,
-    pub etching: Option<Mask>,
-    pub width: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct Layer {
-    pub rgba: Bytes,
-    pub size: u32,
-}
-
-impl Layer {
-    fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
-        use wgpu::util::DeviceExt;
-
-        device.create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: None,
-                size: wgpu::Extent3d {
-                    width: self.size,
-                    height: self.size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &self.rgba,
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Mask {
-    pub pixels: Bytes,
-    pub size: u32,
-}
-
-impl Mask {
-    fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
-        use wgpu::util::DeviceExt;
-
-        device.create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: None,
-                size: wgpu::Extent3d {
-                    width: self.size,
-                    height: self.size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &self.pixels,
-        )
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Parameters {
-    pub viewport: Viewport,
-    pub rotation: Quaternion,
+pub struct Configuration {
+    pub n_samples: u32,
+    pub max_iterations: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Viewport {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Quaternion {
-    pub a: Vector,
-    pub w: f32,
-}
-
-impl Quaternion {
-    pub fn from_radians(a: Vector, angle: f32) -> Self {
-        let angle = -angle / 2.0;
-        let sin = angle.sin();
-        let cos = angle.cos();
-
-        Self { a: a * sin, w: cos }
-    }
-
-    pub fn normalize(self) -> Self {
-        let d = (self.a.dot(self.a) + self.w * self.w).sqrt();
-
-        Self {
-            a: self.a / d,
-            w: self.w / d,
-        }
-    }
-
-    pub fn to_euler(self) -> Vector {
-        let pitch = (2.0 * (self.w * self.a.x - self.a.y * self.a.z))
-            .clamp(-1.0, 1.0)
-            .asin();
-
-        let yaw = (2.0 * (self.w * self.a.y + self.a.z * self.a.x))
-            .atan2(1.0 - 2.0 * (self.a.x * self.a.x + self.a.y * self.a.y));
-
-        let roll = (2.0 * (self.w * self.a.z + self.a.x * self.a.y))
-            .atan2(1.0 - 2.0 * (self.a.x * self.a.x + self.a.z * self.a.z));
-
-        let normalize = |angle: f32| {
-            if angle < 0.0 {
-                -angle
-            } else {
-                (2.0 * std::f32::consts::PI - angle).rem_euclid(2.0 * std::f32::consts::PI)
-            }
-        };
-
-        Vector {
-            x: normalize(pitch),
-            y: normalize(yaw),
-            z: normalize(roll),
-        }
-    }
-}
-
-impl Default for Quaternion {
+impl Default for Configuration {
     fn default() -> Self {
         Self {
-            a: Vector::default(),
-            w: 1.0,
+            n_samples: 2,
+            max_iterations: 64,
         }
     }
 }
 
-impl std::ops::Mul for Quaternion {
-    type Output = Self;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        let a = self.a * rhs.w + rhs.a * self.w + self.a.cross(rhs.a);
-        let w = self.w * rhs.w - self.a.dot(rhs.a);
-
-        Self { a, w }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Vector {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
-impl Vector {
-    pub const X: Self = Self {
-        x: 1.0,
-        y: 0.0,
-        z: 0.0,
-    };
-
-    pub const Y: Self = Self {
-        x: 0.0,
-        y: 1.0,
-        z: 0.0,
-    };
-
-    pub const Z: Self = Self {
-        x: 0.0,
-        y: 0.0,
-        z: 1.0,
-    };
-
-    pub fn cross(self, rhs: Self) -> Self {
-        Self {
-            x: self.y * rhs.z - self.z * rhs.y,
-            y: self.z * rhs.x - self.x * rhs.z,
-            z: self.x * rhs.y - self.y * rhs.x,
-        }
-    }
-
-    pub fn dot(self, rhs: Self) -> f32 {
-        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
-    }
-}
-
-impl std::ops::Add for Vector {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
-        }
-    }
-}
-
-impl std::ops::Mul<f32> for Vector {
-    type Output = Self;
-
-    fn mul(self, rhs: f32) -> Self::Output {
-        Vector {
-            x: self.x * rhs,
-            y: self.y * rhs,
-            z: self.z * rhs,
-        }
-    }
-}
-
-impl std::ops::Div<f32> for Vector {
-    type Output = Self;
-
-    fn div(self, rhs: f32) -> Self::Output {
-        Vector {
-            x: self.x / rhs,
-            y: self.y / rhs,
-            z: self.z / rhs,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Zeroable, bytemuck::Pod)]
 #[repr(C)]
-struct Instance {
-    viewport: [f32; 4],
-    size: [f32; 2],
-    rotation: [f32; 4],
+pub struct Parameters {
+    n_samples: u32,
+    max_iterations: u32,
+}
+
+impl From<Configuration> for Parameters {
+    fn from(parameters: Configuration) -> Self {
+        Self {
+            n_samples: parameters.n_samples,
+            max_iterations: parameters.max_iterations,
+        }
+    }
 }

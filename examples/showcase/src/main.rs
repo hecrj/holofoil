@@ -1,6 +1,5 @@
-use holofoil::{
-    Bytes, Card, Layer, Mask, Parameters, Pipeline, Quaternion, Structure, Vector, Viewport,
-};
+use holofoil::card;
+use holofoil::{Bytes, Card, Configuration, Pipeline, Quaternion, Vector};
 
 use iced::mouse;
 use iced::theme;
@@ -86,6 +85,8 @@ enum Message {
     RotationEulerChanged(Vector),
     ToggleAutoRotate(bool),
     Spin(Vector2),
+    SamplesChanged(u32),
+    MaxIterationsChanged(u32),
 }
 
 impl Showcase {
@@ -95,6 +96,7 @@ impl Showcase {
                 viewer: Viewer {
                     card: Arc::new(umbreon()),
                     cache: Arc::new(Mutex::new(Cache::new())),
+                    configuration: Configuration::default(),
                     rotation: Quaternion::default(),
                     euler: Vector::default(),
                 },
@@ -156,24 +158,54 @@ impl Showcase {
                     last_tick: now,
                 };
             }
+            Message::SamplesChanged(n_samples) => {
+                self.viewer.configuration.n_samples = n_samples;
+            }
+            Message::MaxIterationsChanged(max_iterations) => {
+                self.viewer.configuration.max_iterations = max_iterations;
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let controls = [self.quality(), self.rotation()];
+
         stack![
             shader(&self.viewer).width(Fill).height(Fill),
-            bottom_right(opaque(
-                container(self.controls())
-                    .width(180)
-                    .padding(10)
-                    .style(container::bordered_box)
-            ))
-            .padding(10)
+            bottom_right(opaque(column(controls).width(230).spacing(10).padding(10)))
         ]
         .into()
     }
 
-    fn controls(&self) -> Element<'_, Message> {
+    fn quality(&self) -> Element<'_, Message> {
+        let Configuration {
+            n_samples,
+            max_iterations,
+        } = self.viewer.configuration;
+
+        control(
+            "Quality",
+            column![
+                labeled_slider(
+                    "Samples",
+                    (1..=8, 1),
+                    n_samples,
+                    Message::SamplesChanged,
+                    u32::to_string,
+                ),
+                labeled_slider(
+                    "Segments",
+                    (32..=256, 1),
+                    max_iterations,
+                    Message::MaxIterationsChanged,
+                    u32::to_string,
+                ),
+            ]
+            .spacing(5),
+        )
+    }
+
+    fn rotation(&self) -> Element<'_, Message> {
         let rotation_slider = |label, get: fn(Vector) -> f32, set: fn(Vector, f32) -> Vector| {
             labeled_slider(
                 label,
@@ -186,16 +218,10 @@ impl Showcase {
             )
         };
 
-        column![
-            row![
-                text("Rotation").size(14),
-                horizontal_space(),
-                toggler(matches!(self.mode, Mode::Spinning { .. }))
-                    .text_size(14)
-                    .spacing(5)
-                    .on_toggle(Message::ToggleAutoRotate)
-            ]
-            .align_y(Center),
+        control_with_toggle(
+            "Rotation",
+            matches!(self.mode, Mode::Spinning { .. }),
+            Message::ToggleAutoRotate,
             column![
                 rotation_slider(
                     "X",
@@ -214,16 +240,51 @@ impl Showcase {
                 )
             ]
             .spacing(5),
-        ]
-        .spacing(10)
-        .into()
+        )
     }
+}
+
+fn control<'a>(
+    title: impl text::IntoFragment<'a>,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    container(column![text(title).size(14), content.into()].spacing(10))
+        .width(Fill)
+        .padding(10)
+        .style(container::bordered_box)
+        .into()
+}
+
+fn control_with_toggle<'a>(
+    title: impl text::IntoFragment<'a>,
+    is_toggled: bool,
+    on_toggle: impl Fn(bool) -> Message + 'a,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    container(
+        column![
+            row![
+                text(title).size(14),
+                horizontal_space(),
+                toggler(is_toggled).spacing(5).on_toggle(on_toggle)
+            ]
+            .spacing(10)
+            .align_y(Center),
+            content.into()
+        ]
+        .spacing(10),
+    )
+    .width(Fill)
+    .padding(10)
+    .style(container::bordered_box)
+    .into()
 }
 
 #[derive(Debug)]
 struct Viewer {
-    card: Arc<Structure>,
+    card: Arc<card::Structure>,
     cache: Arc<Mutex<Cache>>,
+    configuration: Configuration,
     rotation: Quaternion,
     euler: Vector,
 }
@@ -327,6 +388,7 @@ impl shader::Program<Message> for Viewer {
         Holofoil {
             card: self.card.clone(),
             cache: self.cache.clone(),
+            configuration: self.configuration,
             rotation: self.rotation,
         }
     }
@@ -334,17 +396,11 @@ impl shader::Program<Message> for Viewer {
     fn mouse_interaction(
         &self,
         state: &Self::State,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         match state {
-            Interaction::Idle => {
-                if cursor.is_over(bounds) {
-                    mouse::Interaction::Grab
-                } else {
-                    mouse::Interaction::None
-                }
-            }
+            Interaction::Idle => mouse::Interaction::None,
             Interaction::Dragging { .. } => mouse::Interaction::Grabbing,
         }
     }
@@ -352,8 +408,9 @@ impl shader::Program<Message> for Viewer {
 
 #[derive(Debug)]
 struct Holofoil {
-    card: Arc<Structure>,
+    card: Arc<card::Structure>,
     cache: Arc<Mutex<Cache>>,
+    configuration: Configuration,
     rotation: Quaternion,
 }
 
@@ -407,10 +464,12 @@ impl shader::Primitive for Holofoil {
             return;
         };
 
+        renderer.pipeline.configure(queue, self.configuration);
+
         card.prepare(
             queue,
-            Parameters {
-                viewport: Viewport {
+            card::Parameters {
+                viewport: card::Viewport {
                     x: bounds.x,
                     y: bounds.y,
                     width: bounds.width,
@@ -446,8 +505,8 @@ impl Cache {
     }
 }
 
-fn umbreon() -> Structure {
-    Structure {
+fn umbreon() -> card::Structure {
+    card::Structure {
         base: load_image(include_bytes!("../assets/sv8-5_en_161_std.png")),
         foil: Some(load_mask(include_bytes!(
             "../assets/sv8-5_en_161_std.foil.png"
@@ -468,7 +527,7 @@ fn pipeline(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFor
     )
 }
 
-fn load_image(bytes: &[u8]) -> Layer {
+fn load_image(bytes: &[u8]) -> card::Image {
     use std::io;
 
     let mut decoder = png::Decoder::new(io::Cursor::new(bytes));
@@ -480,13 +539,13 @@ fn load_image(bytes: &[u8]) -> Layer {
     let metadata = reader.next_frame(&mut rgba).unwrap();
     let bytes = &rgba[..metadata.buffer_size()];
 
-    Layer {
+    card::Image {
         rgba: Bytes::copy_from_slice(bytes),
         size: metadata.width,
     }
 }
 
-fn load_mask(bytes: &[u8]) -> Mask {
+fn load_mask(bytes: &[u8]) -> card::Mask {
     use std::io;
 
     let decoder = png::Decoder::new(io::Cursor::new(bytes));
@@ -496,7 +555,7 @@ fn load_mask(bytes: &[u8]) -> Mask {
     let metadata = reader.next_frame(&mut rgba).unwrap();
     let bytes = &rgba[..metadata.buffer_size()];
 
-    Mask {
+    card::Mask {
         pixels: Bytes::copy_from_slice(bytes),
         size: metadata.width,
     }

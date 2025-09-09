@@ -1,9 +1,15 @@
 @group(0) @binding(0) var u_sampler: sampler;
 @group(0) @binding(1) var u_back: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> u_params: Parameters;
 
 @group(1) @binding(0) var u_base: texture_2d<f32>;
 @group(1) @binding(1) var u_foil: texture_2d<f32>;
 @group(1) @binding(2) var u_etch: texture_2d<f32>;
+
+struct Parameters {
+    n_samples: u32,
+    max_iterations: u32,
+}
 
 struct VertexInput {
     @location(0) viewport: vec4<f32>,
@@ -35,7 +41,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    const n_samples: i32 = 2;
+    let n_samples = u_params.n_samples;
+    let max_iterations = u_params.max_iterations;
+
     const max_distance: f32 = 2.0;
 
     let position = input.position;
@@ -52,8 +60,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var color: vec4<f32>;
 
-    for (var m = 0; m < n_samples; m++) {
-    for (var n = 0; n < n_samples; n++) {
+    for (var m = u32(0); m < n_samples; m++) {
+    for (var n = u32(0); n < n_samples; n++) {
         let o = vec2(f32(m), f32(n)) / f32(n_samples) - 0.5;
         let ray_origin = camera;
 
@@ -66,7 +74,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         var t = -max_distance;
 
-        for (var i = 0; i < 64; i++) {
+        for (var i = u32(0); i < max_iterations; i++) {
             let p = rotate_i(rotation, ray_origin + ray_direction * t);
             let d = sd_card(p, card_size);
 
