@@ -343,7 +343,7 @@ impl Default for Configuration {
                     y: 4.0,
                     z: -20.0,
                 },
-                power: 600.0,
+                power: 400.0,
             },
         }
     }

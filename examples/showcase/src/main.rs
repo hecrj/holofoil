@@ -6,8 +6,8 @@ use iced::theme;
 use iced::time::{Duration, Instant};
 use iced::wgpu;
 use iced::widget::{
-    bottom, bottom_right, column, container, horizontal_space, opaque, responsive, row, shader,
-    stack, text, toggler,
+    bottom, bottom_right, column, container, horizontal_space, opaque, pick_list, responsive, row,
+    shader, stack, text, toggler,
 };
 use iced::window;
 use iced::{
@@ -58,6 +58,7 @@ fn main() -> iced::Result {
 
 #[derive(Debug)]
 struct Showcase {
+    example: Example,
     viewer: Viewer,
     mode: Mode,
 }
@@ -82,6 +83,7 @@ enum Message {
     Booted,
     FrameRequested,
     Grabbed,
+    ExampleSelected(Example),
     RotationChanged(Quaternion),
     RotationEulerChanged(Vector),
     ToggleAutoSpin(bool),
@@ -95,8 +97,9 @@ impl Showcase {
     fn new() -> (Self, Task<Message>) {
         (
             Self {
+                example: Example::Bellibolt,
                 viewer: Viewer {
-                    card: Arc::new(umbreon()),
+                    card: Arc::new(bellibolt()),
                     cache: Arc::new(Mutex::new(Cache::new())),
                     configuration: Configuration::default(),
                     rotation: Quaternion::default(),
@@ -132,6 +135,14 @@ impl Showcase {
                 }
                 Mode::Idle => {}
             },
+            Message::ExampleSelected(example) => {
+                self.example = example;
+                self.viewer.card = Arc::new(match example {
+                    Example::Umbreon => umbreon(),
+                    Example::Bellibolt => bellibolt(),
+                });
+                self.viewer.cache.lock().unwrap().card.take();
+            }
             Message::Grabbed => {
                 self.mode = Mode::Idle;
             }
@@ -172,10 +183,21 @@ impl Showcase {
         responsive(|size| {
             let viewer = shader(&self.viewer).width(Fill).height(Fill);
 
-            let controls = column![self.quality(), self.light(), self.rotation()]
-                .width(230)
-                .spacing(10)
-                .padding(10);
+            let controls = column![
+                pick_list(
+                    [Example::Umbreon, Example::Bellibolt],
+                    Some(self.example),
+                    Message::ExampleSelected
+                )
+                .width(Fill)
+                .text_size(14),
+                self.quality(),
+                self.light(),
+                self.rotation()
+            ]
+            .width(230)
+            .spacing(10)
+            .padding(10);
 
             if size.width / size.height > 1.5 {
                 stack![viewer, bottom_right(opaque(controls))].into()
@@ -223,10 +245,10 @@ impl Showcase {
             column![
                 labeled_slider(
                     "Power",
-                    (100.0..=2000.0, 0.01),
+                    (100.0..=2000.0, 1.0),
                     light.power,
                     move |power| Message::LightChanged(Light { power, ..light }),
-                    |power| format!("{power:.2}"),
+                    |power| format!("{power:.0}"),
                 ),
                 position_sliders(-30.0..=30.0, light.position)
                     .map(move |position| Message::LightChanged(Light { position, ..light })),
@@ -320,7 +342,7 @@ fn position_sliders<'a>(
             (range.clone(), 0.1),
             value,
             move |value| set(position, value),
-            |value| format!("{value:.2}°"),
+            |value| format!("{value:.2}"),
         )
     };
 
@@ -571,6 +593,19 @@ fn umbreon() -> card::Structure {
     }
 }
 
+fn bellibolt() -> card::Structure {
+    card::Structure {
+        base: load_image(include_bytes!("../assets/sv9_en_188_std.png")),
+        foil: Some(load_mask(include_bytes!(
+            "../assets/sv9_en_188_std.foil.png"
+        ))),
+        etching: Some(load_mask(include_bytes!(
+            "../assets/sv9_en_188_std.etch.png"
+        ))),
+        width: 733,
+    }
+}
+
 fn pipeline(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Pipeline {
     Pipeline::new(
         device,
@@ -695,5 +730,20 @@ impl Drop for Watcher {
 
         // This avoids a SIGSEGV because the notifier captures `Device`
         std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Example {
+    Umbreon,
+    Bellibolt,
+}
+
+impl std::fmt::Display for Example {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Example::Bellibolt => "Iono's Bellibolt ex (JTG #188)",
+            Example::Umbreon => "Umbreon ex (PRE #161)",
+        })
     }
 }

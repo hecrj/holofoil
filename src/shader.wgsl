@@ -118,21 +118,22 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     let lumi = luminance(sample.xyz);
                     let etch = textureSampleLevel(u_etch, u_sampler, final_uv, 0.0).r;
                     let foil = textureSampleLevel(u_foil, u_sampler, final_uv, 0.0).r;
-                    let purity = clamp(foil - 3.0 * etch, 0.0, 1.0);
+                    let purity = clamp(foil - 4.0 * etch, 0.0, 1.0);
+
+                    sample = mix(sample, vec4(vec3(etch), 1.0), 0.01);
 
                     if purity > 0.1 && lumi > 0.05 {
-                        let strength = pow(light_angle, 128.0) * 3.0;
+                        let strength = pow(light_angle, 128.0) * 3.0 * (1.0 - 4.0 * etch) * smoothstep(0.05, 0.2, lumi);
                         let angle = clamp(dot(N, L), 0.0, 1.0);
 
-                        foil_color = (sample.xyz + iridescence(angle) * 0.4) * strength * purity;
+                        foil_color = (sample.xyz + iridescence(angle, 2000, 5.0) * 0.4) * strength * purity;
 
                         specular_color = vec3(0.0, 0.0, 0.0);
 
                         // Foil flakes
                         // Inspired by https://www.4rknova.com/blog/2025/08/30/foil-sticker
-                        if purity > 0.2 {
+                        if purity > 0.2 && lumi > 0.1 {
                             let uFlakeReduction = 0.1;
-                            let uFlakeThreshold = 0.5;
                             let uFlakeSize = 600.0;
 
                             // Procedural flake mask
@@ -154,7 +155,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                             var flakeSpec = pow(clamp(dot(perturbedNormal, V) * 0.5 + 0.5, 0.0, 1.0), 128.0);
                             // flakeSpec = max(flakeSpec, 0.1); // always visible
  
-                            let flakeIri = iridescence(dot(perturbedNormal, V));
+                            let flakeIri = iridescence(dot(perturbedNormal, V), 10000, 0.0);
  
                             // Final intensity
                             var flakeIntensity = flakeMask * purity * flakeSpec * phaseMod;
@@ -221,9 +222,9 @@ fn estimate_normal(p: vec3<f32>, size: vec2<f32>) -> vec3<f32> {
     ));
 }
 
-fn iridescence(angle: f32) -> vec3<f32> {
-    let thickness = 100.0 + 2000.0 * (1.0 - angle);
-    let phase = 6.28318 * thickness * 0.01 + 5.0;
+fn iridescence(angle: f32, range: f32, offset: f32) -> vec3<f32> {
+    let thickness = 100.0 + range * (1.0 - angle);
+    let phase = 6.28318 * thickness * 0.01 + offset;
     let rainbow = 0.3 + 0.7 * vec3(sin(phase), sin(phase + 2.094), sin(phase + 4.188));
 
     return mix(vec3(1.0), rainbow, 1.0);
