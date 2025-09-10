@@ -122,19 +122,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     let foil = textureSampleLevel(u_foil, u_sampler, final_uv, 0.0).r;
                     let purity = clamp(foil - 4.0 * etch, 0.0, 1.0);
 
-                    sample = mix(sample, vec4(vec3(etch), 1.0), 0.01);
-
-                    if foil > 0.1 && lumi > 0.05 {
-                        let strength = pow(light_angle, 128.0) * (0.5 - etch * 0.3) * mix(0.7, 1.0, chroma) * 3.0;
+                    if foil > 0.1 {
+                        let strength = pow(light_angle, 128.0) * (1.0 - etch * 0.3) ;
                         let angle = clamp(dot(N, L), 0.0, 1.0);
 
                         foil_color = (sample.xyz + iridescence(angle, 1000, 5.0) * 0.4) * strength * foil;
-
                         specular_color = vec3(0.0, 0.0, 0.0);
 
                         // Foil flakes
                         // Inspired by https://www.4rknova.com/blog/2025/08/30/foil-sticker
-                        if purity > 0.2 && lumi > 0.1 {
+                        if purity > 0.2 && chroma > 0.3 && lumi > 0.1 {
                             let uFlakeReduction = 0.1;
                             let uFlakeSize = 600.0;
 
