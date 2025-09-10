@@ -339,8 +339,8 @@ impl Default for Configuration {
             max_iterations: 128,
             light: Light {
                 position: Vector {
-                    x: 3.0,
-                    y: 4.0,
+                    x: 4.0,
+                    y: 6.0,
                     z: -20.0,
                 },
                 power: 400.0,
