@@ -3,11 +3,11 @@ use holofoil::{Bytes, Card, Configuration, Light, Pipeline, Quaternion, Vector};
 
 use iced::mouse;
 use iced::theme;
-use iced::time::{Duration, Instant};
+use iced::time::Instant;
 use iced::wgpu;
 use iced::widget::{
-    bottom, bottom_right, column, container, horizontal_space, opaque, pick_list, responsive, row,
-    shader, stack, text, toggler,
+    bottom, bottom_right, button, column, container, horizontal_space, iced, opaque, pick_list,
+    responsive, row, shader, stack, svg, text, toggler,
 };
 use iced::window;
 use iced::{
@@ -91,6 +91,14 @@ enum Message {
     SamplesChanged(u32),
     MaxIterationsChanged(u32),
     LightChanged(Light),
+    LinkClicked(Link),
+}
+
+#[derive(Debug, Clone)]
+enum Link {
+    Github,
+    Wgpu,
+    Iced,
 }
 
 impl Showcase {
@@ -176,12 +184,77 @@ impl Showcase {
             Message::LightChanged(light) => {
                 self.viewer.configuration.light = light;
             }
+            Message::LinkClicked(link) => {
+                let url = match link {
+                    Link::Github => "https://github.com/hecrj/holofoil",
+                    Link::Wgpu => "https://wgpu.rs",
+                    Link::Iced => "https://github.com/iced-rs/iced",
+                };
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let _ = open::that_in_background(url);
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().set_href(url);
+                    }
+                }
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         responsive(|size| {
-            let viewer = shader(&self.viewer).width(Fill).height(Fill);
+            let footer = {
+                const HEIGHT: f32 = 8.0;
+
+                fn link<'a>(
+                    link: Link,
+                    content: impl Into<Element<'a, Message>>,
+                ) -> Element<'a, Message> {
+                    button(content)
+                        .on_press(Message::LinkClicked(link))
+                        .padding(0)
+                        .style(button::text)
+                        .into()
+                }
+
+                row![
+                    text("holofoil 0.1.0-alpha —").size(HEIGHT),
+                    text("Made by").size(HEIGHT),
+                    link(
+                        Link::Github,
+                        row![
+                            github().width(HEIGHT).height(HEIGHT),
+                            text("hecrj").size(HEIGHT)
+                        ]
+                        .spacing(HEIGHT / 3.0)
+                        .align_y(Center)
+                    ),
+                    text("with").size(HEIGHT),
+                    link(
+                        Link::Wgpu,
+                        row![
+                            wgpu().width(HEIGHT).height(HEIGHT),
+                            text("wgpu").size(HEIGHT)
+                        ]
+                        .spacing(HEIGHT / 3.0)
+                        .align_y(Center)
+                    ),
+                    text("and").size(HEIGHT),
+                    link(Link::Iced, iced(HEIGHT))
+                ]
+                .align_y(Center)
+                .spacing(HEIGHT * 0.7)
+            };
+
+            let viewer = stack![
+                shader(&self.viewer).width(Fill).height(Fill),
+                bottom(footer).padding(5)
+            ];
 
             let controls = column![
                 pick_list(
@@ -665,6 +738,7 @@ impl Watcher {
         use std::path::PathBuf;
         use std::sync::mpsc;
         use std::thread;
+        use std::time::Duration;
 
         let (sender, receiver) = mpsc::channel();
         let device = device.clone();
@@ -723,7 +797,7 @@ impl Watcher {
 impl Drop for Watcher {
     fn drop(&mut self) {
         if let Ok(watcher) =
-            notify_debouncer_full::new_debouncer(Duration::from_millis(10), None, |_| {})
+            notify_debouncer_full::new_debouncer(std::time::Duration::from_millis(10), None, |_| {})
         {
             self._raw = watcher;
         }
@@ -746,4 +820,24 @@ impl std::fmt::Display for Example {
             Example::Umbreon => "Umbreon ex (PRE #161)",
         })
     }
+}
+
+fn github() -> svg::Svg<'static> {
+    use std::sync::LazyLock;
+
+    static GITHUB: LazyLock<svg::Handle> =
+        LazyLock::new(|| svg::Handle::from_memory(include_bytes!("../assets/github.svg")));
+
+    svg(GITHUB.clone()).style(|theme: &Theme, _| svg::Style {
+        color: Some(theme.palette().text),
+    })
+}
+
+fn wgpu() -> svg::Svg<'static> {
+    use std::sync::LazyLock;
+
+    static WGPU: LazyLock<svg::Handle> =
+        LazyLock::new(|| svg::Handle::from_memory(include_bytes!("../assets/wgpu.svg")));
+
+    svg(WGPU.clone())
 }
