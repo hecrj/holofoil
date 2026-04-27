@@ -6,8 +6,8 @@ use iced::theme;
 use iced::time::Instant;
 use iced::wgpu;
 use iced::widget::{
-    bottom, bottom_right, button, column, container, horizontal_space, iced, opaque, pick_list,
-    responsive, row, shader, stack, svg, text, toggler,
+    bottom, bottom_right, button, column, container, iced, opaque, pick_list, responsive, row,
+    shader, space, stack, svg, text, toggler,
 };
 use iced::window;
 use iced::{
@@ -390,7 +390,7 @@ fn control_with_toggle<'a>(
         column![
             row![
                 text(title).size(14),
-                horizontal_space(),
+                space::horizontal(),
                 toggler(is_toggled).spacing(5).on_toggle(on_toggle)
             ]
             .spacing(10)
@@ -568,24 +568,21 @@ struct Renderer {
     watcher: Watcher,
 }
 
-impl shader::Primitive for Holofoil {
-    type Renderer = Renderer;
-
-    fn initialize(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-    ) -> Self::Renderer {
+impl shader::Pipeline for Renderer {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let watcher = Watcher::new(device, queue, format);
 
-        Renderer {
+        Self {
             pipeline: pipeline(device, queue, format),
             #[cfg(not(target_arch = "wasm32"))]
             watcher,
         }
     }
+}
+
+impl shader::Primitive for Holofoil {
+    type Pipeline = Renderer;
 
     fn prepare(
         &self,
