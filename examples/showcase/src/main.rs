@@ -258,10 +258,11 @@ impl Showcase {
 
             let controls = column![
                 pick_list(
-                    [Example::Umbreon, Example::Bellibolt],
                     Some(self.example),
-                    Message::ExampleSelected
+                    [Example::Umbreon, Example::Bellibolt],
+                    Example::to_string
                 )
+                .on_select(Message::ExampleSelected)
                 .width(Fill)
                 .text_size(14),
                 self.quality(),
@@ -826,7 +827,7 @@ fn github() -> svg::Svg<'static> {
         LazyLock::new(|| svg::Handle::from_memory(include_bytes!("../assets/github.svg")));
 
     svg(GITHUB.clone()).style(|theme: &Theme, _| svg::Style {
-        color: Some(theme.palette().text),
+        color: Some(theme.seed().text),
     })
 }
 

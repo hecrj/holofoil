@@ -184,7 +184,7 @@ impl Pipeline {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("holofoil pipeline layout"),
             bind_group_layouts: &[&uniforms_layout, &textures_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         let shader = device.create_shader_module(load_wgsl!("./shader.wgsl", format));
@@ -223,7 +223,7 @@ impl Pipeline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             cache: None,
-            multiview: None,
+            multiview_mask: None,
         });
 
         Self {
